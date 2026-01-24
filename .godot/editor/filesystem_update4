@@ -8,3 +8,4 @@ res://scenes/weapons/projectile.tscn
 res://scripts/autoload/game_data.gd
 res://scripts/player/player.gd
 res://scenes/player/player.tscn
+res://scenes/weapons/summon_weapon.tscn
