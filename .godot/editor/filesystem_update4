@@ -1,0 +1,5 @@
+res://assets/data/role.name.translation
+res://assets/data/role.Grow.translation
+res://assets/data/role.SummonCritInherit.translation
+res://scenes/main.tscn
+res://scripts/autoload/game_data.gd

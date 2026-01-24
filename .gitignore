@@ -1,0 +1,28 @@
+# 忽略所有图片
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# 忽略所有音乐和音效
+*.mp3
+*.wav
+*.ogg
+
+# 忽略 Aseprite 原文件（如果你有）
+*.aseprite
+
+# 忽略整个资源文件夹（推荐！最干净）
+/assets/
+/Resources/
+/Art/
+/Audio/
+/Sprites/
+/Music/
+
+# 如果用 Unity
+/Assets/*
+!/Assets/Scripts/   # 只保留 Scripts 文件夹（可选）
+
+# 如果用 Godot
+*.import/

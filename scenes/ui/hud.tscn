@@ -1,0 +1,70 @@
+[gd_scene load_steps=2 format=3 uid="uid://d20r0yn5qeaqv"]
+
+[ext_resource type="Script" uid="uid://cweqlyq8jc136" path="res://scripts/ui/hud.gd" id="1_0mwgc"]
+
+[node name="HUD" type="CanvasLayer"]
+layer = 100
+script = ExtResource("1_0mwgc")
+
+[node name="TopBar" type="HBoxContainer" parent="."]
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 23.0
+grow_horizontal = 2
+theme_override_constants/separation = 20
+
+[node name="TimeLabel" type="Label" parent="TopBar"]
+custom_minimum_size = Vector2(100, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "20:00"
+vertical_alignment = 1
+
+[node name="GoldLabel" type="Label" parent="TopBar"]
+custom_minimum_size = Vector2(150, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Gold: 0"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="OreLabel" type="Label" parent="TopBar"]
+custom_minimum_size = Vector2(150, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "ore:0"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="BottomBar" type="VBoxContainer" parent="."]
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -81.0
+grow_horizontal = 2
+grow_vertical = 0
+alignment = 2
+
+[node name="HealthBar" type="ProgressBar" parent="BottomBar"]
+custom_minimum_size = Vector2(600, 20)
+layout_mode = 2
+value = 100.0
+show_percentage = false
+
+[node name="ExpBar" type="ProgressBar" parent="BottomBar"]
+custom_minimum_size = Vector2(600, 15)
+layout_mode = 2
+value = 100.0
+show_percentage = false
+
+[node name="LevelLabel" type="Label" parent="BottomBar"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Lv.1"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="HBoxContainer" type="HBoxContainer" parent="."]
+offset_right = 40.0
+offset_bottom = 40.0
