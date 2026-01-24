@@ -176,13 +176,40 @@ func parse_character_spec() -> void:
 	if spec_text.is_empty():
 		return
 	
-	var parsed_spec: Dictionary = GameData.parse_character_spec(spec_text)
-	if not parsed_spec.is_empty():
-		var stat_name: String = parsed_spec.get("stat", "")
-		var multiplier: float = parsed_spec.get("multiplier", 1.0)
-		spec_multipliers[stat_name] = multiplier
+	# GameData.parse_character_spec现在返回数组
+	var parsed_specs: Array = GameData.parse_character_spec(spec_text)
+	if parsed_specs.is_empty():
+		return
+	
+	# 处理每个特性规则
+	for spec_item: Dictionary in parsed_specs:
+		var stat_name: String = spec_item.get("stat", "")
+		var multiplier: float = spec_item.get("multiplier", 1.0)
+		var operation: String = spec_item.get("operation", "none")
 		
-		print("[Player] 特性生效: ", spec_text, " -> ", stat_name, " × ", multiplier)
+		if stat_name.is_empty():
+			# 可能是特殊规则或无法识别的规则
+			var raw: String = spec_item.get("raw", "")
+			if not raw.is_empty():
+				print("[Player] 特性（未识别）: ", raw)
+			
+			var special: String = spec_item.get("special", "")
+			if not special.is_empty():
+				print("[Player] 特殊特性: ", special)
+			continue
+		
+		# 根据操作类型处理
+		if operation == "multiply":
+			# 倍率修改
+			spec_multipliers[stat_name] = multiplier
+			print("[Player] 特性生效（倍率）: ", stat_name, " × ", multiplier)
+		elif operation == "set_zero":
+			# 强制归零（*0）
+			spec_multipliers[stat_name] = 0.0
+			print("[Player] 特性生效（归零）: ", stat_name, " = 0")
+		elif operation == "special":
+			# 特殊规则（暂不实现，预留）
+			print("[Player] 特性生效（特殊）: ", stat_name, " - ", spec_item.get("special", ""))
 
 
 ## 加载角色精灵图
