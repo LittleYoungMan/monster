@@ -1,0 +1,31 @@
+[gd_scene load_steps=4 format=3 uid="uid://ce830oqw1sf58"]
+
+[ext_resource type="Script" uid="uid://d01k0dqgvplcj" path="res://scripts/weapon/summon_unit.gd" id="1_wec1a"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_awdv7"]
+radius = 20.0
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_16ipd"]
+radius = 300.0
+
+[node name="SummonUnit" type="CharacterBody2D"]
+collision_layer = 0
+collision_mask = 32
+script = ExtResource("1_wec1a")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_awdv7")
+
+[node name="AttackTimer" type="Timer" parent="."]
+
+[node name="LifetimeTimer" type="Timer" parent="."]
+one_shot = true
+
+[node name="DetectionArea" type="Area2D" parent="."]
+collision_layer = 0
+collision_mask = 2
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="DetectionArea"]
+shape = SubResource("CircleShape2D_16ipd")

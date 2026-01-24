@@ -322,16 +322,7 @@ func get_armor_dr() -> float:
 # 武器管理
 ##############################################################################
 
-## 添加武器到空槽位
-## 参数：
-##   weapon_data - 武器实例数据字典
-## 返回：
-##   是否成功添加（true/false）
-## 作用：
-##   1. 查找空槽位
-##   2. 存储武器数据
-##   3. 实例化武器场景节点
-##   4. 重新计算装备加成
+
 func add_weapon(weapon_data: Dictionary) -> bool:
 	# 查找空槽位
 	var empty_slot_index: int = -1
@@ -341,24 +332,95 @@ func add_weapon(weapon_data: Dictionary) -> bool:
 			break
 	
 	if empty_slot_index == -1:
-		push_warning("[Player] 武器槽已满，无法添加武器")
+		push_warning("[Player] 武器槽已满")
 		return false
 	
 	# 存储武器数据
 	weapon_data["slot_index"] = empty_slot_index
 	weapon_slots[empty_slot_index] = weapon_data
 	
-	# TODO: 实例化武器场景节点
-	# var weapon_scene = load("res://scenes/weapons/" + weapon_type + ".tscn")
-	# var weapon_instance = weapon_scene.instantiate()
-	# weapon_instance.initialize(weapon_data, self)
-	# weapon_container.add_child(weapon_instance)
+	# 实例化武器场景节点
+	var weapon_id: String = weapon_data.get("weapon_id", "")
+	var weapon_template: Dictionary = GameData.get_weapon(weapon_id)
+	
+	if weapon_template.is_empty():
+		push_error("[Player] 武器模板不存在: " + weapon_id)
+		return false
+	
+	# 根据BonusClass确定武器类型
+	var bonus_class: String = weapon_template.get("加成类别（BonusClass）", "")
+	var weapon_type: String = ""
+	
+	if bonus_class.begins_with("M"):
+		weapon_type = "melee"
+	elif bonus_class.begins_with("R"):
+		weapon_type = "ranged"
+	elif bonus_class.begins_with("S"):
+		weapon_type = "summon"
+	elif bonus_class.begins_with("E"):
+		weapon_type = "elemental"
+	
+	# 加载对应场景
+	var weapon_scene_path: String = "res://scenes/weapons/" + weapon_type + "_weapon.tscn"
+	
+	if not ResourceLoader.exists(weapon_scene_path):
+		push_error("[Player] 武器场景不存在: " + weapon_scene_path)
+		return false
+	
+	var weapon_scene: PackedScene = load(weapon_scene_path)
+	var weapon_instance: Node2D = weapon_scene.instantiate()
+	
+	# 添加到WeaponContainer
+	weapon_container.add_child(weapon_instance)
+	
+	# 初始化武器
+	if weapon_instance.has_method("initialize"):
+		weapon_instance.initialize(weapon_template, weapon_data, self)
 	
 	# 重新计算装备加成
 	recalculate_equipment_bonus()
 	
 	print("[Player] 武器已添加到槽位 ", empty_slot_index)
 	return true
+
+
+### 添加武器到空槽位
+### 参数：
+###   weapon_data - 武器实例数据字典
+### 返回：
+###   是否成功添加（true/false）
+### 作用：
+###   1. 查找空槽位
+###   2. 存储武器数据
+###   3. 实例化武器场景节点
+###   4. 重新计算装备加成
+#func add_weapon(weapon_data: Dictionary) -> bool:
+	## 查找空槽位
+	#var empty_slot_index: int = -1
+	#for i: int in range(MAX_WEAPON_SLOTS):
+		#if weapon_slots[i].is_empty():
+			#empty_slot_index = i
+			#break
+	#
+	#if empty_slot_index == -1:
+		#push_warning("[Player] 武器槽已满，无法添加武器")
+		#return false
+	#
+	## 存储武器数据
+	#weapon_data["slot_index"] = empty_slot_index
+	#weapon_slots[empty_slot_index] = weapon_data
+	#
+	## TODO: 实例化武器场景节点
+	## var weapon_scene = load("res://scenes/weapons/" + weapon_type + ".tscn")
+	## var weapon_instance = weapon_scene.instantiate()
+	## weapon_instance.initialize(weapon_data, self)
+	## weapon_container.add_child(weapon_instance)
+	#
+	## 重新计算装备加成
+	#recalculate_equipment_bonus()
+	#
+	#print("[Player] 武器已添加到槽位 ", empty_slot_index)
+	#return true
 
 
 ## 移除武器

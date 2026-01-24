@@ -1,0 +1,11 @@
+[gd_scene load_steps=2 format=3 uid="uid://bhmnvtm3njwvc"]
+
+[ext_resource type="Script" uid="uid://wn5dnrey8jg7" path="res://scripts/weapon/elemental_weapon.gd" id="1_h5uut"]
+
+[node name="ElementalWeapon" type="Node2D"]
+
+[node name="ShootPoint" type="Marker2D" parent="."]
+position = Vector2(50, 0)
+
+[node name="AttackTimer" type="Timer" parent="."]
+script = ExtResource("1_h5uut")
