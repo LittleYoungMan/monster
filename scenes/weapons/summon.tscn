@@ -1,0 +1,32 @@
+[gd_scene load_steps=4 format=3 uid="uid://b1teouwnhiinp"]
+
+[ext_resource type="Script" uid="uid://ckhnpm8v86yyr" path="res://scripts/weapon/summon.gd" id="1_46qa2"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_4v5l4"]
+radius = 24.0
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_o5syw"]
+radius = 100.0
+
+[node name="Summon" type="CharacterBody2D"]
+collision_layer = 4
+collision_mask = 34
+script = ExtResource("1_46qa2")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+texture_filter = 1
+scale = Vector2(0.313, 0.313)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_4v5l4")
+
+[node name="AttackArea" type="Area2D" parent="."]
+collision_layer = 2
+collision_mask = 4
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="AttackArea"]
+shape = SubResource("CircleShape2D_o5syw")
+
+[node name="AttackTimer" type="Timer" parent="."]
+
+[connection signal="timeout" from="AttackTimer" to="." method="_on_attack_timer_timeout"]

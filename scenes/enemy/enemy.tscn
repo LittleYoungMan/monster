@@ -1,0 +1,30 @@
+[gd_scene load_steps=4 format=3 uid="uid://dg6lsit4c1vhi"]
+
+[ext_resource type="Script" uid="uid://227b7w06ra0b" path="res://scripts/enemy/enemy.gd" id="1_4a83h"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_a3pup"]
+radius = 48.0
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_40wdo"]
+radius = 50.0
+
+[node name="Enemy" type="CharacterBody2D"]
+script = ExtResource("1_4a83h")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+scale = Vector2(0.25, 0.25)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_a3pup")
+
+[node name="HurtBox" type="Area2D" parent="."]
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="HurtBox"]
+shape = SubResource("CircleShape2D_40wdo")
+
+[node name="HealthBar" type="ProgressBar" parent="."]
+custom_minimum_size = Vector2(60, 6)
+offset_left = -30.0
+offset_top = -40.0
+offset_right = 30.0
+offset_bottom = -13.0

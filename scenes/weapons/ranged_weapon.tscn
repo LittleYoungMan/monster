@@ -1,12 +1,15 @@
 [gd_scene load_steps=2 format=3 uid="uid://b31msexbdiw3l"]
 
-[ext_resource type="Script" uid="uid://dsbswbudscndq" path="res://scripts/weapon/ranged_weapon.gd" id="1_u0xjh"]
+[ext_resource type="Script" uid="uid://cxvyj2gsc8t8b" path="res://scripts/weapon/ranged_weapon.gd" id="1_u0xjh"]
 
 [node name="RangedWeapon" type="Node2D"]
 script = ExtResource("1_u0xjh")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
 
 [node name="ShootPoint" type="Marker2D" parent="."]
 position = Vector2(50, 0)
 
 [node name="AttackTimer" type="Timer" parent="."]
-script = ExtResource("1_u0xjh")
+
+[connection signal="timeout" from="AttackTimer" to="." method="_on_attack_timer_timeout"]

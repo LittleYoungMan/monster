@@ -1,8 +1,17 @@
 [gd_scene load_steps=2 format=3 uid="uid://d0n8pgcj8ic4y"]
 
-[ext_resource type="Script" uid="uid://b0lyccx0v73lr" path="res://scripts/weapon/summon_weapon.gd" id="1_m4t0g"]
+[ext_resource type="Script" uid="uid://dgvkja4pprd44" path="res://scripts/weapon/summon_weapon.gd" id="1_m4t0g"]
 
-[node name="SummonWeapon" type="Node2D"]
+[node name="summon_weapon" type="Node2D"]
 script = ExtResource("1_m4t0g")
 
 [node name="AttackTimer" type="Timer" parent="."]
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+texture_filter = 1
+scale = Vector2(0.25, 0.25)
+
+[node name="SummonTimer" type="Timer" parent="."]
+wait_time = 5.0
+
+[connection signal="timeout" from="SummonTimer" to="." method="_on_summon_timer_timeout"]

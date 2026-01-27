@@ -20,6 +20,7 @@ CollisionLayers="*res://scripts/autoload/collision_layers.gd"
 Localization="*res://scripts/autoload/localization.gd"
 GameData="*res://scripts/autoload/game_data.gd"
 GameManager="*res://scripts/autoload/game_manager.gd"
+SpawnerConfig="*res://scripts/autoload/spawner_config.gd"
 
 [display]
 

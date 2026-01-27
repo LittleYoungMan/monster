@@ -1,6 +1,9 @@
-res://scripts/weapon
-res://scenes
+res://scenes/enemy
+res://scripts/enemy
 res://scripts/autoload
+res://scripts/weapon
+res://scenes/weapons
+res://scenes
 res://scripts/ui
 res://scenes/ui
 res://scenes/player

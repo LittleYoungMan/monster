@@ -1,12 +1,14 @@
 [gd_scene load_steps=3 format=3 uid="uid://bnosmd1orioqr"]
 
-[ext_resource type="Script" uid="uid://c6ndo3844is7x" path="res://scripts/weapon/melee_weapon.gd" id="1_t0v65"]
+[ext_resource type="Script" uid="uid://dxilc6t26ein0" path="res://scripts/weapon/melee_weapon.gd" id="1_t0v65"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_exrkb"]
 radius = 100.0
 
 [node name="MeleeWeapon" type="Node2D"]
 script = ExtResource("1_t0v65")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
 
 [node name="AttackArea" type="Area2D" parent="."]
 collision_layer = 0
@@ -16,3 +18,5 @@ collision_mask = 2
 shape = SubResource("CircleShape2D_exrkb")
 
 [node name="AttackTimer" type="Timer" parent="."]
+
+[connection signal="timeout" from="AttackTimer" to="." method="_on_attack_timer_timeout"]

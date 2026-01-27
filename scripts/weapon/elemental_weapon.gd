@@ -1,399 +1,241 @@
-##############################################################################
-# ElementalWeapon - 元素武器
+﻿##############################################################################
+# ElementalWeapon - 元素武器脚本
 #
-# 功能说明：
-# 1. 继承WeaponBase，实现元素武器的攻击逻辑
-# 2. 发射元素投射物（火球、冰刺、连锁闪电等）
-# 3. 支持AOE、持续区、连锁等特殊机制
-# 4. 使用ElementalDamage属性
+# 设计目的：
+# - 以“范围AOE”为核心攻击方式
+# - 利用玩家属性：燃烧/减速/冻结等状态触发概率
+# - 叠加爆炸伤害/范围相关加成
 #
-# 元素类型：
-#   - 法术弹：直线飞行
-#   - 火球：缓速+爆炸
-#   - 冰刺：穿透+减速
-#   - 毒镖：穿透+持续伤害
-#   - 连锁闪电：自动跳跃多目标
-#   - 波形扫掠：范围覆盖
-#   - 持续区：定点控场
+# CSV字段对齐（weapon.csv）：
+# - BaseDamage / DamageMult / BaseCooldown / BaseRange / IconID
+# - BonusClass决定加成属性
+#
+# 调用链：
+# - Player.add_weapon -> initialize
+# - AttackTimer.timeout -> _on_attack_timer_timeout -> _perform_attack
+#
+# 已实现：范围伤害/状态触发/爆炸范围加成
+# 未实现：复杂状态叠加/抗性系统
 ##############################################################################
-extends WeaponBase
-class_name ElementalWeapon
+extends Node2D
 
 ##############################################################################
-# 投射物场景
+# 变量（运行期）
 ##############################################################################
 
-const PROJECTILE_SCENE: PackedScene = preload("res://scenes/weapons/projectile.tscn")
+## 武器模板数据（来自GameData.get_weapon）
+var weapon_template: Dictionary = {}
+
+## 武器实例数据（品质/词条/槽位）
+var weapon_instance: Dictionary = {}
+
+## 玩家引用
+var player: CharacterBody2D = null
+
+## 当前冷却（秒）
+var current_cooldown: float = 1.0
 
 ##############################################################################
 # 节点引用
 ##############################################################################
 
-@onready var shoot_point: Marker2D = $ShootPoint
-
-##############################################################################
-# 投射物配置
-##############################################################################
-
-## 投射物数据
-var projectile_data: Dictionary = {}
-
-## 元素类型
-var element_type: String = ""  # fire/ice/poison/lightning/shadow/acid
+@onready var sprite: Sprite2D = $Sprite2D
+@onready var attack_area: Area2D = $AttackArea
+@onready var attack_shape: CollisionShape2D = $AttackArea/CollisionShape2D
+@onready var attack_timer: Timer = $AttackTimer
+@onready var vfx_particles: GPUParticles2D = $VFXParticles
 
 ##############################################################################
 # 初始化
 ##############################################################################
 
-## 重写初始化
-func initialize(template_data: Dictionary, inst_data: Dictionary, player: CharacterBody2D) -> void:
-	super.initialize(template_data, inst_data, player)
-	
-	# 加载投射物数据
-	var projectile_id: String = weapon_data.get("投射物ID（ProjectileID）", "")
-	if not projectile_id.is_empty():
-		projectile_data = GameData.get_projectile(projectile_id)
-	
-	# 解析元素类型
-	_parse_element_type()
-	
-	# 设置发射点
-	if shoot_point:
-		var base_range: float = weapon_data.get("基础射程（BaseRange）", 100.0)
-		shoot_point.position = Vector2(base_range * 0.1, 0)
+func initialize(template: Dictionary, instance: Dictionary, owner_player: CharacterBody2D) -> void:
+	weapon_template = template
+	weapon_instance = instance
+	player = owner_player
 
+	_load_sprite()
+	_setup_attack_range()
+	_calculate_cooldown()
 
-## 解析元素类型
-func _parse_element_type() -> void:
-	var attack_type: String = attack_method_config.get("type", "")
-	var params: Dictionary = attack_method_config.get("params", {})
-	
-	# 从攻击方式配置提取元素类型
-	if params.has("element"):
-		element_type = params["element"]
-	elif "fireball" in attack_type:
-		element_type = "fire"
-	elif "chain_lightning" in attack_type:
-		element_type = "lightning"
+	attack_area.collision_layer = CollisionLayers.get_layer_mask(CollisionLayers.PLAYER_PROJECTILE)
+	attack_area.collision_mask = CollisionLayers.get_layer_mask(CollisionLayers.ENEMY)
+
+	attack_timer.wait_time = current_cooldown
+	attack_timer.start()
+
+	print("[ElementalWeapon] 初始化完成: ", weapon_template.get("name_cn", "未知"))
+
+##############################################################################
+# 图标
+##############################################################################
+
+func _load_sprite() -> void:
+	var icon_id: String = weapon_template.get("icon_id", "")
+	if icon_id.is_empty():
+		if sprite:
+			sprite.visible = false
+		return
+
+	var sprite_path: String = "res://assets/PIC/wuqi/icon/256/" + icon_id + ".png"
+	if ResourceLoader.exists(sprite_path):
+		sprite.texture = load(sprite_path)
+		sprite.scale = Vector2(0.25, 0.25)
+		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	else:
-		element_type = "generic"
+		_generate_placeholder_sprite()
 
+func _generate_placeholder_sprite() -> void:
+	var img: Image = Image.create(64, 64, false, Image.FORMAT_RGBA8)
+	img.fill(Color(1.0, 0.5, 0.0, 1.0))
+	sprite.texture = ImageTexture.create_from_image(img)
+	sprite.scale = Vector2(1.0, 1.0)
+
+##############################################################################
+# 范围与冷却
+##############################################################################
+
+func _setup_attack_range() -> void:
+	var base_range: float = weapon_template.get("attack_range", 120.0)
+	var explosion_range_bonus: float = player.get_final_stat("ExplosionRange")
+	var final_range: float = base_range + explosion_range_bonus
+
+	if attack_shape and attack_shape.shape is CircleShape2D:
+		attack_shape.shape.radius = final_range
+		print("[ElementalWeapon] 攻击范围=", final_range, "px (base=", base_range, "+爆炸范围=", explosion_range_bonus, ")")
+
+func _calculate_cooldown() -> void:
+	var base_cooldown: float = weapon_template.get("base_cooldown", 1.2)
+	var cooldown_mult: float = weapon_template.get("cooldown_mult", 1.0)
+	var cdr_inherit: float = weapon_template.get("cdr_inherit", 1.0)
+	var player_cdr: float = player.get_final_stat("Cooldown")
+	var cdr_mult: float = 1.0 - (cdr_inherit * player_cdr / 100.0)
+	current_cooldown = base_cooldown * cooldown_mult * cdr_mult
+	current_cooldown = max(current_cooldown, 0.1)
 
 ##############################################################################
 # 攻击逻辑
 ##############################################################################
 
-## 攻击计时器超时回调
 func _on_attack_timer_timeout() -> void:
-	perform_attack()
+	_perform_attack()
 
+func _perform_attack() -> void:
+	var enemies: Array[Node2D] = []
+	for area: Area2D in attack_area.get_overlapping_areas():
+		if area.is_in_group("enemy_hurtbox"):
+			var enemy: Node2D = area.get_parent()
+			if enemy and enemy.is_in_group("enemy"):
+				enemies.append(enemy)
 
-## 执行攻击
-func perform_attack() -> void:
-	if not shoot_point:
-		return
-	
-	# 朝向鼠标
-	_rotate_to_target()
-	
-	var attack_type: String = attack_method_config.get("type", "")
-	
-	match attack_type:
-		"elemental_spell", "elemental_fireball":
-			# 法术弹/火球
-			_shoot_spell()
-		
-		"elemental_chain_lightning":
-			# 连锁闪电
-			_shoot_chain_lightning()
-		
-		"elemental_wave":
-			# 波形扫掠
-			_shoot_wave()
-		
-		"elemental_area":
-			# 持续区
-			_create_area_effect()
-		
-		"elemental_spray":
-			# 喷射
-			_shoot_spray()
-		
-		_:
-			# 默认法术弹
-			_shoot_spell()
-	
-	weapon_attacked.emit()
-
-
-##############################################################################
-# 发射方式
-##############################################################################
-
-## 发射法术弹
-func _shoot_spell() -> void:
-	_spawn_elemental_projectile(Vector2.RIGHT.rotated(rotation))
-
-
-## 发射连锁闪电
-func _shoot_chain_lightning() -> void:
-	# 连锁闪电需要特殊处理
-	# 先找到最近的敌人
-	var nearest_enemy: Node2D = _find_nearest_enemy()
-	
-	if not nearest_enemy:
-		return
-	
-	# 直接对最近的敌人造成伤害，然后跳跃
-	var damage: float = calculate_damage()
-	_apply_chain_lightning(nearest_enemy, damage, 3)  # 最多跳3次
-
-
-## 连锁闪电递归
-## 参数：
-##   target - 当前目标
-##   damage - 当前伤害
-##   remaining_jumps - 剩余跳跃次数
-func _apply_chain_lightning(target: Node2D, damage: float, remaining_jumps: int) -> void:
-	if not target or not is_instance_valid(target):
-		return
-	
-	# 对当前目标造成伤害
-	if target.has_method("take_damage"):
-		target.take_damage(damage)
-	
-	# TODO: 播放闪电特效
-	
-	if remaining_jumps <= 0:
-		return
-	
-	# 查找下一个目标（距离当前目标最近的其他敌人）
-	var next_target: Node2D = _find_nearest_enemy_from(target, 300.0)
-	
-	if next_target:
-		# 伤害衰减
-		var next_damage: float = damage * 0.8
-		_apply_chain_lightning(next_target, next_damage, remaining_jumps - 1)
-
-
-## 发射波形扫掠
-func _shoot_wave() -> void:
-	# 波形是一个扇形AOE
-	_create_wave_aoe()
-
-
-## 发射喷射
-func _shoot_spray() -> void:
-	# 近距多段喷射，类似散射但更快更近
-	var spray_count: int = 3
-	var spread_angle: float = deg_to_rad(15)
-	
-	for i: int in range(spray_count):
-		var angle_offset: float = -spread_angle / 2 + (spread_angle / (spray_count - 1)) * i
-		var direction: Vector2 = Vector2.RIGHT.rotated(rotation + angle_offset)
-		_spawn_elemental_projectile(direction)
-
-
-## 创建持续区效果
-func _create_area_effect() -> void:
-	# 在鼠标位置创建持续区
-	var mouse_pos: Vector2 = get_global_mouse_position()
-	
-	# TODO: 创建持续区场景
-	# 这里简化为一个临时的Area2D，每隔一段时间造成伤害
-	pass
-
-
-## 创建波形AOE
-func _create_wave_aoe() -> void:
-	# 创建扇形AOE范围
-	var wave_range: float = weapon_data.get("基础射程（BaseRange）", 400.0)
-	var wave_angle: float = deg_to_rad(90)  # 90度扇形
-	
-	# TODO: 实现扇形AOE检测
-	# 这里简化为圆形
-	var damage: float = calculate_damage()
-	_apply_aoe_damage(global_position, wave_range, damage)
-
-
-##############################################################################
-# 投射物生成
-##############################################################################
-
-## 生成元素投射物
-func _spawn_elemental_projectile(direction: Vector2) -> Node2D:
-	if not PROJECTILE_SCENE:
-		return null
-	
-	var projectile: Node2D = PROJECTILE_SCENE.instantiate()
-	
-	projectile.global_position = shoot_point.global_position
-	projectile.rotation = direction.angle()
-	
-	get_tree().current_scene.add_child(projectile)
-	
-	if projectile.has_method("initialize"):
-		var damage: float = calculate_damage()
-		var speed: float = _calculate_projectile_speed()
-		var lifetime: float = _calculate_projectile_lifetime()
-		var pierce_count: int = _get_pierce_count()
-		
-		projectile.initialize(
-			damage,
-			speed,
-			direction,
-			lifetime,
-			pierce_count,
-			projectile_data,
-			owner_player
-		)
-	
-	return projectile
-
-
-##############################################################################
-# AOE伤害
-##############################################################################
-
-## 应用AOE伤害
-## 参数：
-##   center - 中心位置
-##   radius - 半径
-##   damage - 伤害
-func _apply_aoe_damage(center: Vector2, radius: float, damage: float) -> void:
-	# 创建临时检测区域
-	var aoe_area: Area2D = Area2D.new()
-	var aoe_shape: CollisionShape2D = CollisionShape2D.new()
-	var circle: CircleShape2D = CircleShape2D.new()
-	
-	circle.radius = radius
-	aoe_shape.shape = circle
-	aoe_area.add_child(aoe_shape)
-	aoe_area.global_position = center
-	aoe_area.collision_layer = 0
-	aoe_area.collision_mask = CollisionLayers.ENEMY
-	
-	get_tree().current_scene.add_child(aoe_area)
-	
-	await get_tree().process_frame
-	
-	# 对范围内所有敌人造成伤害
-	var enemies: Array[Node2D] = aoe_area.get_overlapping_bodies()
-	for enemy: Node2D in enemies:
-		if enemy.is_in_group("enemy") and enemy.has_method("take_damage"):
-			enemy.take_damage(damage)
-	
-	aoe_area.queue_free()
-
-
-##############################################################################
-# 敌人检测
-##############################################################################
-
-## 查找最近的敌人
-func _find_nearest_enemy() -> Node2D:
-	var enemies: Array[Node] = get_tree().get_nodes_in_group("enemy")
-	
 	if enemies.is_empty():
-		return null
-	
-	var nearest: Node2D = null
-	var nearest_dist: float = INF
-	
-	for enemy: Node in enemies:
-		if not enemy is Node2D:
-			continue
-		
-		var dist: float = global_position.distance_to(enemy.global_position)
-		if dist < nearest_dist:
-			nearest_dist = dist
-			nearest = enemy as Node2D
-	
-	return nearest
-
-
-## 查找距离指定点最近的敌人
-## 参数：
-##   from_pos - 起始节点
-##   max_range - 最大搜索距离
-func _find_nearest_enemy_from(from_node: Node2D, max_range: float) -> Node2D:
-	var enemies: Array[Node] = get_tree().get_nodes_in_group("enemy")
-	
-	var nearest: Node2D = null
-	var nearest_dist: float = INF
-	
-	for enemy: Node in enemies:
-		if not enemy is Node2D:
-			continue
-		
-		if enemy == from_node:
-			continue
-		
-		var dist: float = from_node.global_position.distance_to(enemy.global_position)
-		
-		if dist > max_range:
-			continue
-		
-		if dist < nearest_dist:
-			nearest_dist = dist
-			nearest = enemy as Node2D
-	
-	return nearest
-
-
-##############################################################################
-# 投射物参数计算
-##############################################################################
-
-## 计算投射物速度
-func _calculate_projectile_speed() -> float:
-	var base_speed: float = projectile_data.get("速度_px每秒（SpeedPxps）", 1000.0)
-	var speed_mult: float = attack_method_config.get("params", {}).get("speed_mult", 1.0)
-	return base_speed * speed_mult
-
-
-## 计算投射物存活时间
-func _calculate_projectile_lifetime() -> float:
-	var use_weapon_range: bool = projectile_data.get("是否使用武器射程（UseWeaponRange）", false)
-	
-	if use_weapon_range:
-		var weapon_range: float = weapon_data.get("基础射程（BaseRange）", 800.0)
-		var speed: float = _calculate_projectile_speed()
-		
-		if speed > 0:
-			return weapon_range / speed
-	
-	return projectile_data.get("存活时间_s（LifetimeS）", 2.0)
-
-
-## 获取穿透次数
-func _get_pierce_count() -> int:
-	var weapon_pierce: int = int(weapon_data.get("穿透次数（PierceCount）", 0))
-	if weapon_pierce > 0:
-		return weapon_pierce
-	
-	var config_pierce: int = attack_method_config.get("params", {}).get("pierce", 0)
-	return config_pierce
-
-
-##############################################################################
-# 旋转与朝向
-##############################################################################
-
-## 旋转武器朝向目标
-func _rotate_to_target() -> void:
-	if not owner_player:
 		return
-	
-	var mouse_pos: Vector2 = get_global_mouse_position()
-	var direction: Vector2 = (mouse_pos - global_position).normalized()
-	rotation = direction.angle()
 
+	for enemy: Node2D in enemies:
+		var damage: float = calculate_damage()
+		enemy.take_damage(damage)
+		_apply_elemental_effects(enemy)
+		print("[ElementalWeapon] 命中: ", enemy.name, " damage=", int(damage))
+
+	_play_vfx()
+
+## 施加元素状态（燃烧/减速/冻结）
+func _apply_elemental_effects(enemy: Node2D) -> void:
+	var burn_chance: float = player.get_final_stat("BurnChance")
+	if randf() * 100.0 < burn_chance:
+		if enemy.has_method("apply_burn"):
+			enemy.apply_burn()
+			print("[ElementalWeapon] 触发燃烧")
+
+	var slow_chance: float = player.get_final_stat("SlowChance")
+	if randf() * 100.0 < slow_chance:
+		if enemy.has_method("apply_slow"):
+			enemy.apply_slow()
+			print("[ElementalWeapon] 触发减速")
+
+	var freeze_chance: float = player.get_final_stat("FreezeChance")
+	if randf() * 100.0 < freeze_chance:
+		if enemy.has_method("apply_freeze"):
+			enemy.apply_freeze()
+			print("[ElementalWeapon] 触发冻结")
+
+func _play_vfx() -> void:
+	if vfx_particles:
+		vfx_particles.restart()
 
 ##############################################################################
-# 物理更新
+# 伤害计算
 ##############################################################################
 
-func _physics_process(_delta: float) -> void:
-	if owner_player:
-		global_position = owner_player.global_position
+func calculate_damage() -> float:
+	var base_damage: float = weapon_template.get("base_damage", 12.0)
+	var bonus_class: String = weapon_template.get("bonus_class", "E")
+	var damage_mult: float = weapon_template.get("damage_mult", 1.0)
+
+	var bonus_stat_name: String = ""
+	match bonus_class:
+		"M": bonus_stat_name = "MeleeDamage"
+		"R": bonus_stat_name = "RangedDamage"
+		"E": bonus_stat_name = "ElementalDamage"
+		"S": bonus_stat_name = "SummonDamage"
+		_: bonus_stat_name = "ElementalDamage"
+
+	var player_bonus_stat: float = player.get_final_stat(bonus_stat_name)
+	var bonus_dmg: float = player_bonus_stat * damage_mult
+	var all_dmg_percent: float = player.get_final_stat("AllDamage")
+	var all_dmg_mult: float = 1.0 + all_dmg_percent / 100.0
+
+	var quality: String = weapon_instance.get("quality", "white")
+	var quality_mult: float = _get_quality_multiplier(quality)
+
+	var weapon_dmg_bonus: float = _get_weapon_damage_bonus()
+	var explosion_dmg_bonus: float = player.get_final_stat("ExplosionDamage")
+
+	var final_dmg: float = (base_damage + bonus_dmg + explosion_dmg_bonus) * all_dmg_mult * quality_mult + weapon_dmg_bonus
+
+	var crit_rate_inherit: float = weapon_template.get("crit_rate_inherit", 1.0)
+	var weapon_crit_rate: float = player.get_final_stat("CritRate") * crit_rate_inherit
+	if randf() * 100.0 < weapon_crit_rate:
+		var crit_dmg_inherit: float = weapon_template.get("crit_dmg_inherit", 1.0)
+		var weapon_crit_dmg: float = player.get_final_stat("CritDamage") * crit_dmg_inherit
+		var crit_base: float = weapon_template.get("crit_mult", 1.5)
+		var crit_mult: float = crit_base + weapon_crit_dmg / 100.0
+		final_dmg *= crit_mult
+		print("[ElementalWeapon] 暴击触发: crit_mult=", crit_mult)
+
+	return final_dmg
+
+func _get_quality_multiplier(quality: String) -> float:
+	match quality:
+		"white": return 1.0
+		"blue": return 1.15
+		"purple": return 1.35
+		"gold": return 1.6
+		_: return 1.0
+
+func _get_weapon_damage_bonus() -> float:
+	var bonus: float = 0.0
+	var attributes: Array = weapon_instance.get("attributes", [])
+	for attr: Dictionary in attributes:
+		if attr.get("type", "") == "damage":
+			bonus += attr.get("value", 0.0)
+	return bonus
+
+##############################################################################
+# DPS与接口
+##############################################################################
+
+func calculate_dps() -> float:
+	var avg_damage: float = calculate_damage()
+	return avg_damage / current_cooldown
+
+func get_display_name() -> String:
+	return weapon_template.get("name_cn", "未知武器")
+
+func get_display_name_en() -> String:
+	return weapon_template.get("name_en", "Unknown Weapon")
+
+func update_cooldown() -> void:
+	_calculate_cooldown()
+	attack_timer.wait_time = current_cooldown
+	_setup_attack_range()
