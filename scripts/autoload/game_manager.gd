@@ -1,4 +1,4 @@
-﻿##############################################################################
+##############################################################################
 # GameManager - 游戏管理器
 #
 # 设计目的：
@@ -51,16 +51,55 @@ var ore: int = 0
 ## 玩家引用（用于同步level_up）
 var player: CharacterBody2D = null
 
+## 选中的角色ID
+var selected_character_id: String = ""
+
+## 商店门计时器
+var shop_timer: float = 30.0
+var shop_timer_paused: bool = false
+var game_started: bool = false
+
 ##############################################################################
 # 信号
 ##############################################################################
 
+## 游戏时间变化信号（每帧触发）
+## 参数：seconds - 当前游戏时间（秒）
 signal time_changed(seconds: float)
+
+## 游戏分钟变化信号（每分钟触发）
+## 参数：minute - 当前分钟数（0开始）
 signal minute_changed(minute: int)
+
+## 玩家升级信号
+## 参数：level - 新等级（1开始）
 signal level_up(level: int)
+
+## 金币数量变化信号
+## 参数：amount - 当前金币总数
 signal gold_changed(amount: int)
+
+## 矿石数量变化信号
+## 参数：amount - 当前矿石总数
 signal ore_changed(amount: int)
+
+## 游戏结束信号（20分钟到）
 signal game_over()
+
+## 商店门触发信号（前期30秒/后期60秒触发一次）
+signal shop_door_triggered()
+
+## 工坊门可用信号（Boss出现前30秒或击杀后触发）
+## 参数：boss_minute - Boss分钟数（5/10/15/20）
+signal forge_available(boss_minute: int)
+
+## Boss刷新信号
+## 参数：boss_minute - Boss分钟数（5/10/15/20）
+signal boss_spawned(boss_minute: int)
+
+## Boss击杀信号
+## 参数：boss_minute - Boss分钟数（5/10/15/20）
+signal boss_killed(boss_minute: int)
 
 ##############################################################################
 # 生命周期
@@ -81,6 +120,13 @@ func _process(delta: float) -> void:
 	if current_time >= GAME_DURATION:
 		game_over.emit()
 		set_process(false)
+		current_time += delta
+	
+	# 【新增】商店门计时器
+	if not shop_timer_paused:
+		shop_timer -= delta
+		if shop_timer <= 0:
+			trigger_shop_door()
 
 ##############################################################################
 # 金币/矿石
@@ -139,3 +185,103 @@ func get_player_level() -> int:
 ## 设置玩家引用
 func set_player(p: CharacterBody2D) -> void:
 	player = p
+
+
+##############################################################################
+# 游戏启动
+##############################################################################
+
+## 启动游戏（由Main场景调用）
+func start_game() -> void:
+	if game_started:
+		return
+	
+	game_started = true
+	shop_timer = 30.0  # 初始30秒后第一次商店门
+	set_process(true)
+	
+	print("[GameManager] 游戏开始")
+
+##############################################################################
+##############################################################################
+## 触发商店门生成
+func trigger_shop_door() -> void:
+	shop_door_triggered.emit()
+	
+	## 重置计时器（前期30秒，后期60秒）
+	if current_time < 180.0:  # 前3分钟
+		shop_timer = 30.0
+	else:
+		shop_timer = 60.0
+	
+	print("[GameManager] 商店门触发 - 下次间隔: ", shop_timer, "秒")
+
+##############################################################################
+# Boss系统回调
+##############################################################################
+
+## Boss被击杀（由Boss脚本或EnemySpawner调用）
+func on_boss_defeated(boss_minute: int) -> void:
+	boss_killed.emit(boss_minute)
+	
+	## 触发工坊门（30秒内可用）
+	forge_available.emit(boss_minute)
+	
+	print("[GameManager] Boss击杀: ", boss_minute, "分钟 - 工坊开启")
+
+##############################################################################
+# 游戏重置
+##############################################################################
+
+## 重置游戏状态（用于重新开始）
+func reset_game() -> void:
+	## 重置时间
+	current_time = 0.0
+	current_minute = 0
+	
+	## 重置等级和经验
+	player_level = 1
+	player_exp = 0.0
+	
+	## 重置金币和矿石
+	gold = 0
+	ore = 0
+	
+	## 重置玩家引用
+	player = null
+	
+	## 重置商店计时器
+	shop_timer = 30.0
+	shop_timer_paused = false
+	
+	## 重置游戏状态
+	game_started = false
+	
+	## 发出重置信号（UI可监听此信号刷新）
+	gold_changed.emit(0)
+	ore_changed.emit(0)
+	
+	print("[GameManager] 游戏状态已重置")
+
+##############################################################################
+# 暂停/恢复商店门计时器（用于Boss战）
+##############################################################################
+
+## 暂停商店门计时器
+func pause_shop_timer() -> void:
+	shop_timer_paused = true
+	print("[GameManager] 商店门计时器已暂停")
+
+## 恢复商店门计时器
+func resume_shop_timer() -> void:
+	shop_timer_paused = false
+	print("[GameManager] 商店门计时器已恢复")
+
+##############################################################################
+# 获取当前分钟（供外部调用）
+##############################################################################
+
+## 获取当前游戏分钟数
+func get_current_minute() -> int:
+	return current_minute
+	

@@ -1,4 +1,4 @@
-﻿##############################################################################
+##############################################################################
 # EnemySpawner - 敌人生成器
 #
 # 设计目的：
@@ -363,4 +363,3 @@ func print_stats() -> void:
 	print("分布:")
 	for monster_id: String in enemy_count_by_type.keys():
 		print("  ", monster_id, ": ", enemy_count_by_type[monster_id])
-

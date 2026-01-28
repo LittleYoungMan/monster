@@ -1,4 +1,4 @@
-﻿##############################################################################
+##############################################################################
 # Boss - Boss脚本（继承Enemy）
 #
 # 设计目的：
@@ -98,6 +98,9 @@ func die() -> void:
 	if SpawnerConfig.BOSS_PAUSE_TIMER and GameManager.has_method("resume_timer"):
 		GameManager.resume_timer()
 
+	# 【新增】通知GameManager
+	GameManager.on_boss_defeated(boss_minute)
+	
 	print("[Boss] 被击杀: ", boss_minute, "分钟 - 金币=", gold_drop, " 矿石=", ore_drop)
 	queue_free()
 

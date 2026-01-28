@@ -1,0 +1,21 @@
+[gd_scene load_steps=3 format=3 uid="uid://bwvcfqkucq5og"]
+
+[ext_resource type="Script" uid="uid://c1g8sfegfv654" path="res://scripts/shop/shop_door.gd" id="1_me2pl"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_fsqxq"]
+radius = 50.0
+
+[node name="ShopDoor" type="Area2D"]
+collision_layer = 64
+script = ExtResource("1_me2pl")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+texture_filter = 1
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_fsqxq")
+
+[node name="HintLabel" type="Label" parent="."]
+offset_right = 40.0
+offset_bottom = 23.0
+text = "进入商店"

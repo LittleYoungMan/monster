@@ -19,3 +19,10 @@ res://scripts/debug/test_setup.gd
 res://scripts/player/player.gd
 res://scripts/weapon/summon_weapon.gd
 res://scripts/weapon/ranged_weapon.gd
+res://scripts/autoload/game_manager.gd
+res://scripts/enemy/enemy_spawner.gd
+res://scenes/shop/shop_door.tscn
+res://scripts/shop/shop_door.gd
+res://scenes/shop/forge_door.tscn
+res://scenes/run/game_over_ui.tscn
+res://scripts/enemy/boss.gd

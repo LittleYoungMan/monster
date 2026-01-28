@@ -1,0 +1,16 @@
+[gd_scene load_steps=3 format=3 uid="uid://b1amya4kexn47"]
+
+[ext_resource type="Script" uid="uid://dhmpjqii20lr7" path="res://scripts/shop/forge_door.gd" id="1_j5243"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_gxkp5"]
+radius = 60.0
+
+[node name="ForgeDoor" type="Area2D"]
+collision_layer = 128
+script = ExtResource("1_j5243")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+texture_filter = 1
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_gxkp5")
