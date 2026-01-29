@@ -25,10 +25,10 @@ extends Node
 ## 每分钟刷怪频率（值越大 => 刷怪越快）
 ## key为“起始分钟”（含），value为该阶段每分钟刷怪次数
 const SPAWN_RATE_PER_MINUTE: Dictionary = {
-	0:  3.0,   # 0-5分钟
-	5:  6.0,   # 5-10分钟
-	10: 12.0,  # 10-15分钟
-	15: 20.0   # 15-20分钟
+	0:  12.0,   # 0-5分钟
+	5:  20.0,   # 5-10分钟
+	10: 30.0,  # 10-15分钟
+	15: 45.0   # 15-20分钟
 }
 
 ## 获取刷怪间隔（秒）
@@ -40,10 +40,10 @@ func get_spawn_interval(minute: int) -> float:
 
 ## 每次刷怪批量（同样按阶段配置）
 const SPAWN_BATCH_SIZE: Dictionary = {
-	0:  1,
-	5:  2,
-	10: 3,
-	15: 4
+	0:  3,
+	5:  5,
+	10: 7,
+	15: 9
 }
 
 ## 获取当前阶段的刷怪数量
@@ -133,7 +133,7 @@ const POO_SPAWN_NEAR_ORE_RADIUS: float = 200.0
 const SPLIT_ORB_SPAWN_IN_VIEW_ONLY: bool = true
 
 ## 全局怪物数量上限
-const MAX_ENEMY_COUNT: int = 100
+const MAX_ENEMY_COUNT: int = 220
 
 ## 是否使用“单怪物类型上限”（与MAX_ENEMY_COUNT叠加使用）
 const USE_INDIVIDUAL_CAP: bool = true

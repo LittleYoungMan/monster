@@ -14,3 +14,18 @@ texture_filter = 1
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="."]
 shape = SubResource("CircleShape2D_gxkp5")
+
+[node name="HintLabel" type="Label" parent="."]
+offset_right = 40.0
+offset_bottom = 23.0
+text = "进入工坊"
+
+[node name="CountdownLabel" type="Label" parent="."]
+offset_right = 40.0
+offset_bottom = 23.0
+text = "30s"
+
+[node name="Particles" type="GPUParticles2D" parent="."]
+emitting = true
+amount = 32
+process_material = null

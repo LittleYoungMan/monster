@@ -19,3 +19,8 @@ shape = SubResource("CircleShape2D_fsqxq")
 offset_right = 40.0
 offset_bottom = 23.0
 text = "进入商店"
+
+[node name="Particles" type="GPUParticles2D" parent="."]
+emitting = true
+amount = 24
+process_material = null

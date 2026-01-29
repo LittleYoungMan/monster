@@ -89,6 +89,14 @@ var alive_time: float = 0.0
 ## 是否已触发强化（例如“15秒强化”）
 var is_enhanced: bool = false
 
+## 减速状态
+var slow_timer: float = 0.0
+var slow_mult: float = 1.0
+
+## 击退速度
+var knockback_velocity: Vector2 = Vector2.ZERO
+const KNOCKBACK_DAMP: float = 8.0
+
 ##############################################################################
 # 远程投射物参数
 ##############################################################################
@@ -151,6 +159,10 @@ func initialize(id: String, current_minute: int) -> void:
 		push_error("[Enemy] 怪物数据不存在: " + monster_id)
 		queue_free()
 		return
+
+	## 确保onready节点已就绪
+	if not is_node_ready():
+		await ready
 
 	_calculate_stats(current_minute)
 	_parse_attack_type()
@@ -292,6 +304,7 @@ func _setup_collision() -> void:
 	])
 
 	hurt_box.collision_layer = 0
+	hurt_box.collision_layer = CollisionLayers.get_layer_mask(CollisionLayers.ENEMY)
 	hurt_box.collision_mask = CollisionLayers.get_layer_mask(CollisionLayers.PLAYER_PROJECTILE)
 	hurt_box.area_entered.connect(_on_hurt_box_area_entered)
 	hurt_box.add_to_group("enemy_hurtbox")
@@ -345,6 +358,11 @@ func _physics_process(delta: float) -> void:
 	if not player or not is_instance_valid(player):
 		return
 
+	if slow_timer > 0.0:
+		slow_timer -= delta
+		if slow_timer <= 0.0:
+			slow_mult = 1.0
+
 	## “存活X秒后强化”逻辑
 	if "15秒" in behavior and not is_enhanced:
 		alive_time += delta
@@ -368,6 +386,11 @@ func _physics_process(delta: float) -> void:
 	else:
 		_ai_melee_attack(delta)
 
+	## 击退衰减
+	if knockback_velocity.length() > 1.0:
+		velocity += knockback_velocity
+		knockback_velocity = knockback_velocity.lerp(Vector2.ZERO, delta * KNOCKBACK_DAMP)
+
 	move_and_slide()
 
 	if health_bar:
@@ -381,7 +404,7 @@ func _ai_melee_attack(delta: float) -> void:
 	var distance: float = global_position.distance_to(player.global_position)
 	if distance > attack_range:
 		var direction: Vector2 = (player.global_position - global_position).normalized()
-		velocity = direction * speed
+		velocity = direction * _get_current_speed()
 	else:
 		velocity = Vector2.ZERO
 		if attack_timer <= 0:
@@ -399,19 +422,19 @@ func _ai_ranged_attack(delta: float) -> void:
 	if "保持距离" in behavior or "不靠近" in behavior:
 		if distance < keep_distance:
 			var direction: Vector2 = (global_position - player.global_position).normalized()
-			velocity = direction * speed
+			velocity = direction * _get_current_speed()
 		elif distance > keep_distance + 100.0:
 			var direction: Vector2 = (player.global_position - global_position).normalized()
-			velocity = direction * speed * 0.5
+			velocity = direction * _get_current_speed() * 0.5
 		else:
 			velocity = Vector2.ZERO
 	else:
 		if distance > attack_range:
 			var direction: Vector2 = (player.global_position - global_position).normalized()
-			velocity = direction * speed
+			velocity = direction * _get_current_speed()
 		elif distance < attack_range * 0.5:
 			var direction: Vector2 = (global_position - player.global_position).normalized()
-			velocity = direction * speed * 0.3
+			velocity = direction * _get_current_speed() * 0.3
 		else:
 			velocity = Vector2.ZERO
 
@@ -444,7 +467,7 @@ func _perform_melee_attack() -> void:
 
 ## 远程攻击：发射投射物
 func _perform_ranged_attack() -> void:
-	var projectile_scene: PackedScene = load("res://scenes/enemies/enemy_projectile.tscn")
+	var projectile_scene: PackedScene = load("res://scenes/enemy/enemy_projectile.tscn")
 	if not projectile_scene:
 		push_error("[Enemy] 投射物场景不存在")
 		return
@@ -464,7 +487,7 @@ func _perform_ranged_attack() -> void:
 
 ## 创建单发投射物（可附带溅射/分裂）
 func _create_single_projectile(direction: Vector2, splash: bool = false) -> void:
-	var projectile_scene: PackedScene = load("res://scenes/enemies/enemy_projectile.tscn")
+	var projectile_scene: PackedScene = load("res://scenes/enemy/enemy_projectile.tscn")
 	var projectile: Area2D = projectile_scene.instantiate()
 	var has_splash: bool = splash or "溅射" in behavior or "爆炸" in behavior
 
@@ -493,7 +516,12 @@ func _calculate_final_damage() -> float:
 
 func _retreat_from_player(delta: float) -> void:
 	var direction: Vector2 = (global_position - player.global_position).normalized()
-	velocity = direction * speed * 1.5
+	velocity = direction * _get_current_speed() * 1.5
+
+func _get_current_speed() -> float:
+	if slow_timer > 0.0:
+		return speed * slow_mult
+	return speed
 
 ## 15秒强化示例：翻倍血量与护甲
 func _enhance_split_orb() -> void:
@@ -577,7 +605,7 @@ func _extract_number_from_text(text: String, default_value: int) -> int:
 
 ## 死亡召唤小怪
 func _spawn_death_minions(minion_id: String, count: int, hp_mult: float = 1.0) -> void:
-	var enemy_scene: PackedScene = load("res://scenes/enemies/enemy.tscn")
+	var enemy_scene: PackedScene = load("res://scenes/enemy/enemy.tscn")
 	if not enemy_scene:
 		return
 	for i in range(count):
@@ -594,7 +622,7 @@ func _spawn_death_minions(minion_id: String, count: int, hp_mult: float = 1.0) -
 
 ## 死亡弹幕
 func _spawn_death_projectiles(count: int) -> void:
-	var projectile_scene: PackedScene = load("res://scenes/enemies/enemy_projectile.tscn")
+	var projectile_scene: PackedScene = load("res://scenes/enemy/enemy_projectile.tscn")
 	if not projectile_scene:
 		return
 	for i in range(count):
@@ -614,3 +642,14 @@ func _spawn_death_projectiles(count: int) -> void:
 		projectile.global_position = global_position
 		get_parent().add_child(projectile)
 	print("[Enemy] 死亡弹幕: ", count, "发")
+
+##############################################################################
+# 状态效果
+##############################################################################
+
+func apply_slow(duration: float, mult: float) -> void:
+	slow_timer = max(slow_timer, duration)
+	slow_mult = min(slow_mult, mult)
+
+func apply_knockback(direction: Vector2, strength: float) -> void:
+	knockback_velocity = direction.normalized() * strength

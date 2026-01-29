@@ -82,6 +82,36 @@ var projectile_type: String = ""
 ## 连锁上限
 var chain_limit: int = 0
 
+## 是否回旋体
+var is_boomerang: bool = false
+
+## 是否喷射
+var is_spray: bool = false
+
+## 是否抛甩体（带摆动轨迹）
+var is_swing: bool = false
+
+## 是否抛物线/榴弹
+var is_lob: bool = false
+
+## 是否波形
+var is_wave: bool = false
+
+## 是否已进入回程
+var is_returning: bool = false
+
+## 抛甩摆幅
+var swing_amplitude: float = 60.0
+
+## 抛甩频率
+var swing_frequency: float = 0.08
+
+## 抛物线摆幅
+var lob_amplitude: float = 80.0
+
+## 命中后是否留下持续区
+var leave_area_on_hit: bool = false
+
 ## 连锁命中次数（当前已命中）
 var chain_hits: int = 0
 
@@ -108,6 +138,12 @@ var start_position: Vector2 = Vector2.ZERO
 ## 已飞行距离
 var traveled_distance: float = 0.0
 
+## 是否命中体弧形（近战弧形命中体）
+var is_melee_arc: bool = false
+
+## 弧形命中体寿命
+var melee_arc_lifetime: float = 0.12
+
 ##############################################################################
 # 节点引用
 ##############################################################################
@@ -128,6 +164,13 @@ func _ready() -> void:
 		CollisionLayers.WALL
 	])
 	start_position = global_position
+
+	## 连锁投射物若速度为0，立即触发连锁
+	if speed <= 0.0 and _is_chain_projectile():
+		var nearest: Node2D = _find_nearest_enemy()
+		if nearest:
+			_chain_to_next(damage, nearest.global_position)
+		queue_free()
 
 ##############################################################################
 # 初始化
@@ -169,10 +212,28 @@ func initialize(
 	chain_limit = chain_limit_in
 	vfx_hit_id = vfx_id
 
+	var type_text: String = projectile_type_in
+	is_boomerang = type_text.find("回旋") != -1
+	is_spray = type_text.find("喷射") != -1
+	is_swing = type_text.find("抛甩") != -1 or type_text.find("抛射") != -1
+	is_melee_arc = type_text.find("近战弧形") != -1
+	is_lob = type_text.find("榴弹") != -1 or type_text.find("黏液") != -1
+	is_wave = type_text.find("波形") != -1
+	leave_area_on_hit = (area_duration_s > 0.0 and (type_text.find("黏液") != -1 or type_text.find("持续区") != -1))
+
 	## 若未提供命中半径但有爆炸半径，使用爆炸半径
 	if hit_radius_px <= 0.0 and explode_radius_px > 0.0:
 		hit_radius_px = explode_radius_px
 	area_tick_timer = 0.0
+
+	if is_melee_arc:
+		if hit_radius_px <= 0.0:
+			hit_radius_px = max(attack_range * 0.5, 40.0)
+		area_duration_s = melee_arc_lifetime
+	if is_wave and hit_radius_px <= 0.0:
+		hit_radius_px = 30.0
+	if is_lob and explode_radius_px > 0.0:
+		lob_amplitude = max(40.0, explode_radius_px * 0.5)
 
 	_load_sprite(sprite_sheet_id)
 	_apply_hit_radius()
@@ -215,7 +276,7 @@ func _physics_process(delta: float) -> void:
 			rotation = direction.angle()
 
 	## 区域型投射物：停留并周期造成伤害
-	if area_duration_s > 0.0:
+	if area_duration_s > 0.0 and not is_spray:
 		area_duration_s -= delta
 		area_tick_timer -= delta
 		if area_tick_timer <= 0.0:
@@ -227,10 +288,49 @@ func _physics_process(delta: float) -> void:
 
 	## 直线飞行
 	var movement: Vector2 = direction * speed * delta
+
+	if is_boomerang and not is_returning and traveled_distance >= max_distance * 0.5:
+		is_returning = true
+		hit_enemies.clear()
+	if is_returning:
+		var return_dir: Vector2 = (start_position - global_position).normalized()
+		if return_dir != Vector2.ZERO:
+			direction = return_dir
+			rotation = direction.angle()
+
+	if is_swing:
+		var perp: Vector2 = Vector2(-direction.y, direction.x)
+		var swing: float = sin(traveled_distance * swing_frequency) * swing_amplitude
+		movement += perp * swing * delta
+
+	if is_wave:
+		var perp_wave: Vector2 = Vector2(-direction.y, direction.x)
+		var wave: float = sin(traveled_distance * 0.12) * 40.0
+		movement += perp_wave * wave * delta
+
+	if is_lob:
+		var perp_lob: Vector2 = Vector2(-direction.y, direction.x)
+		var progress: float = clamp(traveled_distance / max(max_distance, 1.0), 0.0, 1.0)
+		var arc: float = sin(progress * PI) * lob_amplitude
+		movement += perp_lob * arc * delta
+
 	position += movement
 	traveled_distance += movement.length()
 	if traveled_distance >= max_distance:
-		_destroy_out_of_range()
+		if is_boomerang and not is_returning:
+			is_returning = true
+		else:
+			_destroy_out_of_range()
+
+	## 喷射：移动中持续伤害
+	if is_spray and area_duration_s > 0.0:
+		area_duration_s -= delta
+		area_tick_timer -= delta
+		if area_tick_timer <= 0.0:
+			_tick_area_damage()
+			area_tick_timer = 0.15
+		if area_duration_s <= 0.0:
+			queue_free()
 
 func _destroy_out_of_range() -> void:
 	queue_free()
@@ -261,6 +361,11 @@ func _hit_enemy(enemy: Node) -> void:
 	## 爆炸类型：直接AOE后销毁
 	if explode and explode_radius_px > 0.0:
 		_explode_at(enemy.global_position, actual_damage)
+		if leave_area_on_hit:
+			speed = 0.0
+			direction = Vector2.ZERO
+			area_duration_s = max(area_duration_s, 1.0)
+			return
 		queue_free()
 		return
 

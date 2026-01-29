@@ -22,6 +22,7 @@ extends CharacterBody2D
 ## 角色ID（role.csv中的id）
 @export var character_id: String = "hero_01"
 
+
 ##############################################################################
 # 角色数据（运行期）
 ##############################################################################
@@ -90,7 +91,6 @@ func _ready() -> void:
 		weapon_slots[i] = {}
 
 	_preload_weapon_scenes()
-	load_character_data(character_id)
 
 	## 受击事件
 	hurt_box.area_entered.connect(_on_hurt_box_area_entered)
@@ -446,17 +446,27 @@ func _find_empty_weapon_slot() -> int:
 	return -1
 
 func _get_weapon_class(weapon_template: Dictionary) -> String:
-	var weapon_class_cn: String = weapon_template.get("Class", weapon_template.get("class", ""))
-	if weapon_class_cn.is_empty():
-		weapon_class_cn = weapon_template.get("weapon_class", "")
-	match weapon_class_cn:
-		"近战", "melee": return "melee"
-		"远程", "ranged": return "ranged"
-		"元素", "element": return "element"
-		"召唤", "summon": return "summon"
-		_:
-			push_warning("[Player] 未知武器类型: " + weapon_class_cn)
-			return "melee"
+	var summon_id: String = weapon_template.get("summon_unit_id", "")
+	if not summon_id.is_empty():
+		return "summon"
+
+	var projectile_id: String = weapon_template.get("projectile_id", "")
+	var bonus_class_raw: String = weapon_template.get("bonus_class_raw", weapon_template.get("bonus_class", ""))
+	var bonus_prefix: String = bonus_class_raw.left(1)
+
+	if not projectile_id.is_empty():
+		if bonus_prefix == "E":
+			return "element"
+		return "ranged"
+
+	if bonus_prefix == "E":
+		return "element"
+	if bonus_prefix == "R":
+		return "ranged"
+	if bonus_prefix == "S":
+		return "summon"
+
+	return "melee"
 
 func replace_weapon(slot_index: int, new_weapon_data: Dictionary) -> bool:
 	if slot_index < 0 or slot_index >= MAX_WEAPON_SLOTS:
@@ -501,6 +511,7 @@ func _update_weapon_positions() -> void:
 		var angle: float = weapon_orbit_base_angle + angle_step * float(i)
 		var offset: Vector2 = Vector2(cos(angle), sin(angle)) * WEAPON_ORBIT_RADIUS
 		weapon_nodes[i].position = offset
+		weapon_nodes[i].rotation = angle
 
 func get_total_dps() -> float:
 	var total_dps: float = 0.0

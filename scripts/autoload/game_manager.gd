@@ -109,6 +109,8 @@ func _ready() -> void:
 	print("[GameManager] 初始化完成")
 
 func _process(delta: float) -> void:
+	if not game_started:
+		return
 	current_time += delta
 	time_changed.emit(current_time)
 
@@ -276,6 +278,16 @@ func pause_shop_timer() -> void:
 func resume_shop_timer() -> void:
 	shop_timer_paused = false
 	print("[GameManager] 商店门计时器已恢复")
+
+##############################################################################
+# 兼容接口（供Boss系统调用）
+##############################################################################
+
+func pause_timer() -> void:
+	pause_shop_timer()
+
+func resume_timer() -> void:
+	resume_shop_timer()
 
 ##############################################################################
 # 获取当前分钟（供外部调用）

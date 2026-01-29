@@ -92,9 +92,6 @@ func die() -> void:
 	GameManager.add_ore(ore_drop)
 	GameManager.add_exp(50)
 
-	if GameManager.has_signal("boss_killed"):
-		GameManager.boss_killed.emit(boss_minute)
-
 	if SpawnerConfig.BOSS_PAUSE_TIMER and GameManager.has_method("resume_timer"):
 		GameManager.resume_timer()
 

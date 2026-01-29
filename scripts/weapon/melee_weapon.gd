@@ -60,6 +60,9 @@ var current_cooldown: float = 1.0
 ## 数据来源：_perform_attack()累加
 var attack_count: int = 0
 
+## 攻击动作描述（来自weapon.csv的actackWay）
+var attack_way: String = ""
+
 ##############################################################################
 # 节点引用
 ##############################################################################
@@ -75,6 +78,15 @@ var attack_count: int = 0
 
 ## 攻击计时器
 @onready var attack_timer: Timer = $AttackTimer
+
+##############################################################################
+# 运行时更新
+##############################################################################
+
+func _process(delta: float) -> void:
+	## 让攻击范围始终以玩家为中心，严格按attack_range生效
+	if player and attack_area:
+		attack_area.global_position = player.global_position
 
 ##############################################################################
 # 初始化
@@ -99,6 +111,7 @@ func initialize(template: Dictionary, instance: Dictionary, owner_player: Charac
 	weapon_template = template
 	weapon_instance = instance
 	player = owner_player
+	attack_way = weapon_template.get("attack_way", weapon_template.get("actackWay", ""))
 
 	# 1) 载入图标
 	_load_sprite()
@@ -112,6 +125,9 @@ func initialize(template: Dictionary, instance: Dictionary, owner_player: Charac
 	# 4) 设置碰撞层/掩码
 	attack_area.collision_layer = CollisionLayers.get_layer_mask(CollisionLayers.PLAYER_PROJECTILE)
 	attack_area.collision_mask = CollisionLayers.get_layer_mask(CollisionLayers.ENEMY)
+	attack_area.add_to_group("weapon_attack")
+	attack_area.monitoring = true
+	attack_area.monitorable = true
 
 	# 5) 启动计时器
 	attack_timer.wait_time = current_cooldown
@@ -221,6 +237,7 @@ func _on_attack_timer_timeout() -> void:
 ## 2) 计算伤害并调用enemy.take_damage()
 ## 3) 输出调试信息
 func _perform_attack() -> void:
+	_play_attack_animation()
 	var overlapping_areas: Array[Area2D] = attack_area.get_overlapping_areas()
 
 	var enemies: Array[Node2D] = []
@@ -233,21 +250,35 @@ func _perform_attack() -> void:
 	if enemies.is_empty():
 		return
 
+	var arc_deg: float = _get_attack_arc_deg()
+	var base_dir: Vector2 = _get_base_attack_dir(enemies)
+
 	attack_count += 1
 	var unique_mechanic: String = weapon_template.get("unique_mechanic", "")
 
-	if "最多3目标" in unique_mechanic or "三目标" in unique_mechanic or "3目标" in unique_mechanic:
+	if "最多3目标" in unique_mechanic or "三目标" in unique_mechanic or "3目标" in unique_mechanic or "只能打三个" in unique_mechanic:
 		enemies = enemies.slice(0, 3)
 
 	var damage_mult: float = 1.0
 	if "每3次强化" in unique_mechanic and attack_count % 3 == 0:
 		damage_mult = 1.2
 
+	## 单体突刺：只命中最近目标
+	if "单体高伤" in unique_mechanic or "直线突刺" in unique_mechanic:
+		enemies = enemies.slice(0, 1)
+
 	for enemy: Node2D in enemies:
+		if arc_deg > 0.0 and base_dir != Vector2.ZERO:
+			var enemy_dir: Vector2 = (enemy.global_position - global_position).normalized()
+			var angle_deg: float = rad_to_deg(base_dir.angle_to(enemy_dir))
+			if abs(angle_deg) > arc_deg * 0.5:
+				continue
 		var damage: float = calculate_damage() * damage_mult
+
 		if enemy.has_method("take_damage"):
 			enemy.take_damage(damage)
 			print("[MeleeWeapon] 命中: ", enemy.name, " damage=", int(damage))
+			_continue_after_hit(enemy, damage, base_dir, unique_mechanic)
 		else:
 			push_warning("[MeleeWeapon] 目标没有take_damage(): ", enemy.name)
 
@@ -346,3 +377,90 @@ func get_display_name_en() -> String:
 func update_cooldown() -> void:
 	_calculate_cooldown()
 	attack_timer.wait_time = current_cooldown
+
+##############################################################################
+# 攻击模板（依据actackWay/UniqueMechanic）
+##############################################################################
+
+func _get_attack_arc_deg() -> float:
+	var way: String = attack_way
+	if way.find("30°") != -1:
+		return 30.0
+	if way.find("45°") != -1:
+		return 45.0
+	if way.find("60°") != -1:
+		return 60.0
+	if way.find("90°") != -1:
+		return 90.0
+	if way.find("垂直") != -1 or way.find("突刺") != -1:
+		return 20.0
+	if way.find("横扫") != -1:
+		return 90.0
+	var unique_mechanic: String = weapon_template.get("unique_mechanic", "")
+	if unique_mechanic.find("小范围挥击") != -1:
+		return 20.0
+	if unique_mechanic.find("扇形横扫") != -1:
+		return 100.0
+	if unique_mechanic.find("横扫范围更大") != -1:
+		return 100.0
+	return 0.0
+
+func _get_base_attack_dir(enemies: Array[Node2D]) -> Vector2:
+	var nearest: Node2D = null
+	var nearest_dist: float = INF
+	for enemy: Node2D in enemies:
+		var dist: float = global_position.distance_to(enemy.global_position)
+		if dist < nearest_dist:
+			nearest_dist = dist
+			nearest = enemy
+	if nearest:
+		return (nearest.global_position - global_position).normalized()
+	return Vector2.ZERO
+
+func _continue_after_hit(enemy: Node2D, damage: float, base_dir: Vector2, unique_mechanic: String) -> void:
+	## 小范围爆炸
+	if "小范围爆炸" in unique_mechanic or "爆炸" in unique_mechanic:
+		_apply_aoe_damage(enemy.global_position, 80.0, damage)
+
+func _apply_aoe_damage(center: Vector2, radius: float, damage: float) -> void:
+	var enemies: Array[Node] = get_tree().get_nodes_in_group("enemy")
+	for node: Node in enemies:
+		if node is Node2D:
+			var dist: float = center.distance_to(node.global_position)
+			if dist <= radius:
+				if node.has_method("take_damage"):
+					node.take_damage(damage)
+
+##############################################################################
+# 攻击动作表现
+##############################################################################
+
+func _play_attack_animation() -> void:
+	var anim_target: Node2D = sprite if sprite else self
+	if not anim_target:
+		return
+
+	var tween: Tween = get_tree().create_tween()
+	tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+	var base_rotation: float = anim_target.rotation
+	var swing_a: float = -0.4
+	var swing_b: float = 0.4
+
+	if "45" in attack_way:
+		swing_a = -0.8
+		swing_b = 0.8
+	elif "垂直" in attack_way:
+		swing_a = -0.5
+		swing_b = 0.5
+	elif "横" in attack_way:
+		swing_a = -0.2
+		swing_b = 0.2
+	elif "旋转" in attack_way:
+		tween.tween_property(anim_target, "rotation", base_rotation + TAU, 0.12)
+		tween.tween_property(anim_target, "rotation", base_rotation, 0.06)
+		return
+
+	anim_target.rotation = base_rotation + swing_a
+	tween.tween_property(anim_target, "rotation", base_rotation + swing_b, 0.08)
+	tween.tween_property(anim_target, "rotation", base_rotation, 0.06)

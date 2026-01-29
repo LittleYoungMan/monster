@@ -796,5 +796,6 @@ func _load_monster_bosses() -> void:
 			"Minute": int(_parse_float(raw.get("Minute", ""))),
 			"behavior": raw.get("Field_15", "")
 		}
+		boss_monsters[boss_id] = boss_data
 	file.close()
 	print("[GameData] Boss数据加载完成: ", boss_monsters.size(), " 条")

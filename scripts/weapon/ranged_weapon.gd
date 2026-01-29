@@ -46,6 +46,12 @@ var current_cooldown: float = 1.0
 ## 投射物场景（玩家投射物）
 var projectile_scene: PackedScene = null
 
+## 攻击模板（由actackWay解析）
+var shots_per_attack: int = 1
+var burst_count: int = 1
+var burst_interval: float = 0.05
+var spread_deg: float = 0.0
+
 ##############################################################################
 # 节点引用
 ##############################################################################
@@ -73,6 +79,7 @@ func initialize(template: Dictionary, instance: Dictionary, owner_player: Charac
 	player = owner_player
 
 	_load_sprite()
+	_parse_attack_pattern()
 	_calculate_cooldown()
 
 	attack_timer.wait_time = current_cooldown
@@ -147,7 +154,12 @@ func _perform_attack() -> void:
 		return
 
 	var damage: float = calculate_damage()
+	_fire_burst(shoot_direction, damage)
 
+func _fire_burst(base_dir: Vector2, damage: float) -> void:
+	_fire_shots(base_dir, damage)
+
+func _fire_shots(base_dir: Vector2, damage: float) -> void:
 	## 从projectile.csv读取投射物配置
 	var projectile_id: String = weapon_template.get("projectile_id", "")
 	var projectile_cfg: Dictionary = {}
@@ -175,34 +187,47 @@ func _perform_attack() -> void:
 	var area_duration: float = projectile_cfg.get("area_duration_s", 0.0)
 	var vfx_hit_id: String = projectile_cfg.get("vfx_hit_id", "")
 
-	## 连锁类型：链数=HitLimit
+	## 连锁类型：链数=HitLimit（若为0则给默认值）
 	var chain_limit: int = 0
-	if "连锁" in projectile_type and hit_limit > 0:
-		chain_limit = hit_limit
+	if "连锁" in projectile_type:
+		chain_limit = hit_limit if hit_limit > 0 else 3
 
-	var projectile: Area2D = projectile_scene.instantiate()
-	projectile.global_position = shoot_point.global_position
-	get_tree().root.add_child(projectile)
+	var target_pos: Vector2 = _get_target_position(base_dir)
+	for shot_index in range(shots_per_attack):
+		var dir: Vector2 = base_dir
+		if shots_per_attack > 1 and spread_deg > 0.0:
+			var spread_step: float = deg_to_rad(spread_deg) / float(max(shots_per_attack - 1, 1))
+			var start_angle: float = -deg_to_rad(spread_deg) * 0.5
+			var angle_offset: float = start_angle + spread_step * float(shot_index)
+			dir = base_dir.rotated(angle_offset)
 
-	projectile.initialize(
-		shoot_direction,
-		projectile_speed,
-		damage,
-		pierce_count,
-		pierce_dmg_mult,
-		sprite_id,
-		attack_range,
-		hit_radius,
-		homing,
-		explode,
-		explode_radius,
-		area_duration,
-		projectile_type,
-		chain_limit,
-		vfx_hit_id
-	)
+		var projectile: Area2D = projectile_scene.instantiate()
+		if projectile_speed <= 0.0 or projectile_type.find("持续区") != -1 or projectile_type.find("连锁") != -1:
+			projectile.global_position = target_pos
+		else:
+			projectile.global_position = shoot_point.global_position
+		get_tree().root.add_child(projectile)
 
-	print("[RangedWeapon] 发射投射物: dir=", shoot_direction, " damage=", int(damage))
+		projectile.initialize(
+			dir,
+			projectile_speed,
+			damage,
+			pierce_count,
+			pierce_dmg_mult,
+			sprite_id,
+			attack_range,
+			hit_radius,
+			homing,
+			explode,
+			explode_radius,
+			area_duration,
+			projectile_type,
+			chain_limit,
+			vfx_hit_id
+		)
+
+	print("[RangedWeapon] 发射投射物: dir=", base_dir, " damage=", int(damage))
+	_play_attack_animation(base_dir)
 
 ## 获取射击方向（优先最近敌人）
 func _get_shoot_direction() -> Vector2:
@@ -212,6 +237,12 @@ func _get_shoot_direction() -> Vector2:
 
 	var mouse_pos: Vector2 = get_global_mouse_position()
 	return (mouse_pos - global_position).normalized()
+
+func _get_target_position(base_dir: Vector2) -> Vector2:
+	var nearest_enemy: Node2D = _find_nearest_enemy()
+	if nearest_enemy:
+		return nearest_enemy.global_position
+	return global_position + base_dir * weapon_template.get("attack_range", 500.0)
 
 ## 查找最近敌人
 func _find_nearest_enemy() -> Node2D:
@@ -301,3 +332,43 @@ func get_display_name_en() -> String:
 func update_cooldown() -> void:
 	_calculate_cooldown()
 	attack_timer.wait_time = current_cooldown
+
+##############################################################################
+# 攻击模板解析（actackWay + UniqueMechanic）
+##############################################################################
+
+func _parse_attack_pattern() -> void:
+	shots_per_attack = 1
+	burst_count = 1
+	burst_interval = 0.05
+	spread_deg = 0.0
+
+	var attack_way: String = weapon_template.get("attack_way", weapon_template.get("actackWay", ""))
+	var unique_mechanic: String = weapon_template.get("unique_mechanic", "")
+	var proj_id: String = weapon_template.get("projectile_id", "")
+	var proj_cfg: Dictionary = {}
+	if not proj_id.is_empty():
+		proj_cfg = GameData.get_projectile(proj_id)
+	var proj_type: String = proj_cfg.get("type", "")
+
+	# 仅使用projectile.csv提供的Type/字段驱动行为
+	# actackWay/UniqueMechanic若没有明确数值，不额外生成多段/散射等行为
+	if "爆炸" in unique_mechanic:
+		pass
+
+##############################################################################
+# 攻击动作表现
+##############################################################################
+
+func _play_attack_animation(dir: Vector2) -> void:
+	if not sprite:
+		return
+
+	var base_rot: float = sprite.rotation
+	var target_rot: float = dir.angle()
+	var tween: Tween = get_tree().create_tween()
+	tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(sprite, "rotation", target_rot, 0.05)
+	tween.tween_property(sprite, "scale", sprite.scale * 1.1, 0.05)
+	tween.tween_property(sprite, "scale", sprite.scale, 0.08)
+	tween.tween_property(sprite, "rotation", base_rot, 0.08)

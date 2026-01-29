@@ -45,6 +45,27 @@ var forge_door_scene: PackedScene = null
 var game_over_ui_scene: PackedScene = null
 
 ##############################################################################
+# 地图拼接配置
+##############################################################################
+
+## 地图图片路径（按 3x2 顺序拼接）
+const MAP_TEXTURE_PATHS: Array[String] = [
+	"res://assets/PIC/map/4096/2.png",
+	"res://assets/PIC/map/4096/3.png",
+	"res://assets/PIC/map/4096/4.png",
+	"res://assets/PIC/map/4096/5.png",
+	"res://assets/PIC/map/4096/6.png",
+	"res://assets/PIC/map/4096/7.png"
+]
+
+## 地图列数/行数
+const MAP_COLUMNS: int = 3
+const MAP_ROWS: int = 2
+
+## 每张地图目标高度（1080p）
+const MAP_TARGET_HEIGHT: float = 1080.0
+
+##############################################################################
 # 节点引用
 ##############################################################################
 
@@ -57,6 +78,9 @@ var player: CharacterBody2D = null
 ## HUD
 @onready var hud: CanvasLayer = $HUD
 
+## 地图根节点
+@onready var map_root: Node2D = $MapRoot
+
 ##############################################################################
 # 生命周期
 ##############################################################################
@@ -64,6 +88,9 @@ var player: CharacterBody2D = null
 func _ready() -> void:
 	## 尝试加载可选场景（可能不存在）
 	_load_optional_scenes()
+
+	## 生成大地图
+	_build_map()
 	
 	## 初始化玩家
 	_initialize_player()
@@ -177,8 +204,8 @@ func _on_forge_available(boss_minute: int) -> void:
 	forge_door.global_position = spawn_pos
 	
 	## 传递Boss分钟标记（用于UI显示）
-	if forge_door.has_method("set_boss_minute"):
-		forge_door.set_boss_minute(boss_minute)
+	if forge_door.has_method("initialize"):
+		forge_door.initialize(boss_minute)
 	
 	## 添加到场景
 	add_child(forge_door)
@@ -231,7 +258,7 @@ func _on_game_over() -> void:
 
 func _load_optional_scenes() -> void:
 	## 商店门场景
-	var shop_door_path: String = "res://scenes/ui/shop_door.tscn"
+	var shop_door_path: String = "res://scenes/shop/shop_door.tscn"
 	if ResourceLoader.exists(shop_door_path):
 		shop_door_scene = load(shop_door_path)
 		print("[Main] 商店门场景加载成功")
@@ -239,7 +266,7 @@ func _load_optional_scenes() -> void:
 		push_warning("[Main] 商店门场景不存在: ", shop_door_path)
 	
 	## 工坊门场景
-	var forge_door_path: String = "res://scenes/ui/forge_door.tscn"
+	var forge_door_path: String = "res://scenes/shop/forge_door.tscn"
 	if ResourceLoader.exists(forge_door_path):
 		forge_door_scene = load(forge_door_path)
 		print("[Main] 工坊门场景加载成功")
@@ -247,12 +274,67 @@ func _load_optional_scenes() -> void:
 		push_warning("[Main] 工坊门场景不存在: ", forge_door_path)
 	
 	## 结算界面场景
-	var game_over_path: String = "res://scenes/ui/game_over_ui.tscn"
+	var game_over_path: String = "res://scenes/run/game_over_ui.tscn"
 	if ResourceLoader.exists(game_over_path):
 		game_over_ui_scene = load(game_over_path)
 		print("[Main] 结算界面加载成功")
 	else:
 		push_warning("[Main] 结算界面不存在: ", game_over_path)
+
+##############################################################################
+# 大地图拼接
+##############################################################################
+
+func _build_map() -> void:
+	if not map_root:
+		return
+
+	## 清理旧地图
+	for child: Node in map_root.get_children():
+		child.queue_free()
+
+	if MAP_TEXTURE_PATHS.size() == 0:
+		return
+
+	var first_tex: Texture2D = load(MAP_TEXTURE_PATHS[0])
+	if not first_tex:
+		push_warning("[Main] 地图贴图加载失败: ", MAP_TEXTURE_PATHS[0])
+		return
+
+	var base_size: Vector2 = first_tex.get_size()
+	if base_size.y <= 0:
+		return
+
+	var scale_factor: float = MAP_TARGET_HEIGHT / base_size.y
+	var tile_size: Vector2 = base_size * scale_factor
+	var total_width: float = tile_size.x * float(MAP_COLUMNS)
+	var total_height: float = tile_size.y * float(MAP_ROWS)
+
+	## 让地图中心对齐场景原点
+	map_root.position = Vector2(-total_width * 0.5, -total_height * 0.5)
+
+	var index: int = 0
+	for row in range(MAP_ROWS):
+		for col in range(MAP_COLUMNS):
+			if index >= MAP_TEXTURE_PATHS.size():
+				return
+			var tex_path: String = MAP_TEXTURE_PATHS[index]
+			var tex: Texture2D = load(tex_path)
+			if not tex:
+				push_warning("[Main] 地图贴图缺失: ", tex_path)
+				index += 1
+				continue
+
+			var sprite := Sprite2D.new()
+			sprite.texture = tex
+			sprite.centered = false
+			sprite.position = Vector2(col * tile_size.x, row * tile_size.y)
+			sprite.scale = Vector2(scale_factor, scale_factor)
+			sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			sprite.z_index = -100
+			map_root.add_child(sprite)
+
+			index += 1
 
 ##############################################################################
 # 调试接口

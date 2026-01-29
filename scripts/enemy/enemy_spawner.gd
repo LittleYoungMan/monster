@@ -265,7 +265,7 @@ func _on_boss_spawned(boss_minute: int) -> void:
 
 	print("[EnemySpawner] Boss出现: ", boss_minute, "分钟")
 
-func _on_boss_killed() -> void:
+func _on_boss_killed(_boss_minute: int) -> void:
 	is_boss_active = false
 	print("[EnemySpawner] Boss已击杀，恢复刷怪")
 

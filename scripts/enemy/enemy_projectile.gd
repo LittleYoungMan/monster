@@ -149,7 +149,7 @@ func _hit_player(player: Node) -> void:
 
 ## 创建分裂弹（放射状）
 func _create_split_projectiles(count: int) -> void:
-	var projectile_scene: PackedScene = load("res://scenes/enemies/enemy_projectile.tscn")
+	var projectile_scene: PackedScene = load("res://scenes/enemy/enemy_projectile.tscn")
 	if not projectile_scene:
 		return
 

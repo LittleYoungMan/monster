@@ -1,14 +1,24 @@
-[gd_scene load_steps=4 format=3 uid="uid://bfr3jijsxmxsp"]
+[gd_scene load_steps=7 format=3 uid="uid://bfr3jijsxmxsp"]
 
 [ext_resource type="Script" uid="uid://dfh0j45q5ur15" path="res://scripts/run/main.gd" id="1_sugp2"]
 [ext_resource type="Script" uid="uid://bqprbkqcx2271" path="res://scripts/enemy/enemy_spawner.gd" id="2_jyhfs"]
-[ext_resource type="Script" uid="uid://cweqlyq8jc136" path="res://scripts/ui/hud.gd" id="3_tbgi4"]
+[ext_resource type="PackedScene" uid="uid://d20r0yn5qeaqv" path="res://scenes/ui/hud.tscn" id="3_tbgi4"]
+[ext_resource type="PackedScene" path="res://scenes/shop/shop_ui.tscn" id="4_su3m1"]
+[ext_resource type="PackedScene" path="res://scenes/shop/forge_ui.tscn" id="5_f2r9k"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_sugp2")
 
+[node name="MapRoot" type="Node2D" parent="."]
+
 [node name="EnemySpawner" type="Node2D" parent="."]
 script = ExtResource("2_jyhfs")
 
-[node name="HUD" type="CanvasLayer" parent="."]
-script = ExtResource("3_tbgi4")
+[node name="HUD" parent="." instance=ExtResource("3_tbgi4")]
+
+[node name="UI" type="CanvasLayer" parent="."]
+layer = 50
+
+[node name="ShopUI" parent="UI" instance=ExtResource("4_su3m1")]
+
+[node name="ForgeUI" parent="UI" instance=ExtResource("5_f2r9k")]

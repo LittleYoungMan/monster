@@ -1,0 +1,46 @@
+[gd_scene load_steps=2 format=3 uid="uid://c3k7kq4b1h2tq"]
+
+[ext_resource type="Script" path="res://scripts/shop/shop_ui.gd" id="1_3ux2v"]
+
+[node name="ShopUI" type="Control"]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+script = ExtResource("1_3ux2v")
+
+[node name="Panel" type="Panel" parent="."]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -300.0
+offset_top = -200.0
+offset_right = 300.0
+offset_bottom = 200.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="Panel"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 20.0
+offset_top = 20.0
+offset_right = -20.0
+offset_bottom = -20.0
+theme_override_constants/separation = 12
+
+[node name="TitleLabel" type="Label" parent="Panel/VBoxContainer"]
+text = "商店（占位）"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 28
+
+[node name="HintLabel" type="Label" parent="Panel/VBoxContainer"]
+text = "后续接入商店卡牌与武器购买逻辑"
+horizontal_alignment = 1
+
+[node name="CloseButton" type="Button" parent="Panel/VBoxContainer"]
+text = "关闭"
+custom_minimum_size = Vector2(180, 44)
