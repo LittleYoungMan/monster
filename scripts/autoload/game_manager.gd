@@ -27,6 +27,18 @@ const EXP_CURVE: Array[int] = [
 # 运行期状态
 ##############################################################################
 
+## 是否启用调试初始金币
+## 作用：方便商店测试
+## 当前值：true
+const DEBUG_START_GOLD_ENABLED: bool = true
+
+## 调试初始金币数量
+## 单位：金币
+## 作用：启动后直接发放金币
+## 调整范围：0-9999
+## 当前值：2000
+const DEBUG_START_GOLD_AMOUNT: int = 2000
+
 ## 当前游戏时间（秒）
 var current_time: float = 0.0
 
@@ -53,6 +65,11 @@ var player: CharacterBody2D = null
 
 ## 选中的角色ID
 var selected_character_id: String = ""
+
+## 地图边界（世界坐标）
+## 作用：限制玩家/怪物不出地图
+## 数据来源：Main._build_map()
+var map_bounds: Rect2 = Rect2()
 
 ## 商店门计时器
 var shop_timer: float = 30.0
@@ -106,11 +123,12 @@ signal boss_killed(boss_minute: int)
 ##############################################################################
 
 func _ready() -> void:
-	print("[GameManager] 初始化完成")
+	pass  # autoload节点的process默认就是开启的
 
 func _process(delta: float) -> void:
 	if not game_started:
 		return
+
 	current_time += delta
 	time_changed.emit(current_time)
 
@@ -122,9 +140,9 @@ func _process(delta: float) -> void:
 	if current_time >= GAME_DURATION:
 		game_over.emit()
 		set_process(false)
-		current_time += delta
-	
-	# 【新增】商店门计时器
+		return  # 立即返回，避免后续逻辑继续执行
+
+	# 商店门计时器
 	if not shop_timer_paused:
 		shop_timer -= delta
 		if shop_timer <= 0:
@@ -197,26 +215,24 @@ func set_player(p: CharacterBody2D) -> void:
 func start_game() -> void:
 	if game_started:
 		return
-	
+
 	game_started = true
+	if DEBUG_START_GOLD_ENABLED:
+		add_gold(DEBUG_START_GOLD_AMOUNT)
 	shop_timer = 30.0  # 初始30秒后第一次商店门
 	set_process(true)
-	
-	print("[GameManager] 游戏开始")
 
 ##############################################################################
 ##############################################################################
 ## 触发商店门生成
 func trigger_shop_door() -> void:
 	shop_door_triggered.emit()
-	
+
 	## 重置计时器（前期30秒，后期60秒）
 	if current_time < 180.0:  # 前3分钟
 		shop_timer = 30.0
 	else:
 		shop_timer = 60.0
-	
-	print("[GameManager] 商店门触发 - 下次间隔: ", shop_timer, "秒")
 
 ##############################################################################
 # Boss系统回调
@@ -240,30 +256,28 @@ func reset_game() -> void:
 	## 重置时间
 	current_time = 0.0
 	current_minute = 0
-	
+
 	## 重置等级和经验
 	player_level = 1
 	player_exp = 0.0
-	
+
 	## 重置金币和矿石
 	gold = 0
 	ore = 0
-	
+
 	## 重置玩家引用
 	player = null
-	
+
 	## 重置商店计时器
 	shop_timer = 30.0
 	shop_timer_paused = false
-	
+
 	## 重置游戏状态
 	game_started = false
-	
+
 	## 发出重置信号（UI可监听此信号刷新）
 	gold_changed.emit(0)
 	ore_changed.emit(0)
-	
-	print("[GameManager] 游戏状态已重置")
 
 ##############################################################################
 # 暂停/恢复商店门计时器（用于Boss战）

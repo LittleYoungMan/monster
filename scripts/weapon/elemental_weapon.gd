@@ -46,6 +46,19 @@ var current_cooldown: float = 1.0
 @onready var vfx_particles: GPUParticles2D = $VFXParticles
 
 ##############################################################################
+# 爆炸特效参数
+##############################################################################
+
+## 爆炸VFX路径
+const ELEMENT_VFX_PATH: String = "res://assets/PIC/wuqi/VFX/256/vfx_mask_explosion_core.png"
+
+## 爆炸VFX基础缩放
+const ELEMENT_VFX_SCALE: float = 0.25
+
+## 爆炸VFX时长
+const ELEMENT_VFX_DURATION: float = 0.2
+
+##############################################################################
 # 初始化
 ##############################################################################
 
@@ -79,9 +92,11 @@ func _load_sprite() -> void:
 
 	var sprite_path: String = "res://assets/PIC/wuqi/icon/256/" + icon_id + ".png"
 	if ResourceLoader.exists(sprite_path):
-		sprite.texture = load(sprite_path)
+		var texture: Texture2D = load(sprite_path)
+		sprite.texture = texture
 		sprite.scale = Vector2(0.25, 0.25)
 		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		_apply_handle_pivot(texture, sprite.scale)
 	else:
 		_generate_placeholder_sprite()
 
@@ -90,6 +105,44 @@ func _generate_placeholder_sprite() -> void:
 	img.fill(Color(1.0, 0.5, 0.0, 1.0))
 	sprite.texture = ImageTexture.create_from_image(img)
 	sprite.scale = Vector2(1.0, 1.0)
+	_apply_handle_pivot(sprite.texture, sprite.scale)
+
+## 将武器握把作为旋转中心
+##
+## 参数：
+##   texture - 纹理
+##   scale_value - 当前缩放
+func _apply_handle_pivot(texture: Texture2D, scale_value: Vector2) -> void:
+	if not sprite or not texture:
+		return
+	sprite.centered = false
+	var size: Vector2 = texture.get_size() * scale_value
+	var left_offset: float = _get_opaque_left_offset(texture) * scale_value.x
+	# 让武器从玩家向外延伸（握把靠近玩家）
+	sprite.position = Vector2(-left_offset, -size.y * 0.5)
+
+## 获取贴图非透明像素的最左边界
+##
+## 参数：
+##   texture - 纹理
+## 返回：
+##   左边界像素坐标（0表示无偏移）
+func _get_opaque_left_offset(texture: Texture2D) -> float:
+	var img: Image = texture.get_image()
+	if img == null:
+		return 0.0
+	var w: int = img.get_width()
+	var h: int = img.get_height()
+	var min_x: int = w
+	for y in range(h):
+		for x in range(w):
+			var color: Color = img.get_pixel(x, y)
+			if color.a > 0.01:
+				if x < min_x:
+					min_x = x
+	if min_x == w:
+		return 0.0
+	return float(min_x)
 
 ##############################################################################
 # 范围与冷却
@@ -150,7 +203,7 @@ func _apply_elemental_effects(enemy: Node2D) -> void:
 	var slow_chance: float = player.get_final_stat("SlowChance")
 	if randf() * 100.0 < slow_chance:
 		if enemy.has_method("apply_slow"):
-			enemy.apply_slow()
+			enemy.apply_slow(GameData.SLOW_DURATION, GameData.SLOW_MULTIPLIER)
 			print("[ElementalWeapon] 触发减速")
 
 	var freeze_chance: float = player.get_final_stat("FreezeChance")
@@ -160,8 +213,21 @@ func _apply_elemental_effects(enemy: Node2D) -> void:
 			print("[ElementalWeapon] 触发冻结")
 
 func _play_vfx() -> void:
-	if vfx_particles:
-		vfx_particles.restart()
+	## 低成本VFX：短暂缩放+淡出
+	if not ResourceLoader.exists(ELEMENT_VFX_PATH):
+		return
+	var vfx_node: Node2D = Node2D.new()
+	var vfx_sprite: Sprite2D = Sprite2D.new()
+	vfx_sprite.texture = load(ELEMENT_VFX_PATH)
+	vfx_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	vfx_sprite.scale = Vector2(ELEMENT_VFX_SCALE, ELEMENT_VFX_SCALE)
+	vfx_node.add_child(vfx_sprite)
+	get_parent().add_child(vfx_node)
+	vfx_node.global_position = global_position
+	var tween: Tween = vfx_node.create_tween()
+	tween.tween_property(vfx_sprite, "scale", vfx_sprite.scale * 1.7, ELEMENT_VFX_DURATION)
+	tween.parallel().tween_property(vfx_sprite, "modulate:a", 0.0, ELEMENT_VFX_DURATION)
+	tween.tween_callback(vfx_node.queue_free)
 
 ##############################################################################
 # 伤害计算

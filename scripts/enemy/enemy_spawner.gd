@@ -234,8 +234,16 @@ func _get_spawn_around_player() -> Vector2:
 	return player.global_position + offset
 
 func _get_spawn_near_ore() -> Vector2:
-	# TODO: 在矿石附近刷怪（需矿物系统提供点位）
-	return _get_spawn_around_player()
+	var mines: Array[Node] = get_tree().get_nodes_in_group("mine")
+	if mines.is_empty():
+		return _get_spawn_around_player()
+	var mine_node: Node2D = mines[randi() % mines.size()] as Node2D
+	if not mine_node:
+		return _get_spawn_around_player()
+	var radius: float = SpawnerConfig.POO_SPAWN_NEAR_ORE_RADIUS
+	var angle: float = randf() * TAU
+	var offset: Vector2 = Vector2(cos(angle), sin(angle)) * radius
+	return mine_node.global_position + offset
 
 func _get_spawn_in_view() -> Vector2:
 	var camera: Camera2D = get_viewport().get_camera_2d()

@@ -93,9 +93,11 @@ func _load_sprite() -> void:
 
 	var sprite_path: String = "res://assets/PIC/wuqi/icon/256/" + icon_id + ".png"
 	if ResourceLoader.exists(sprite_path):
-		sprite.texture = load(sprite_path)
+		var texture: Texture2D = load(sprite_path)
+		sprite.texture = texture
 		sprite.scale = Vector2(0.25, 0.25)
 		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		_apply_handle_pivot(texture, sprite.scale)
 	else:
 		_generate_placeholder_sprite()
 
@@ -104,6 +106,44 @@ func _generate_placeholder_sprite() -> void:
 	img.fill(Color(0.6, 0.3, 0.9, 1.0))
 	sprite.texture = ImageTexture.create_from_image(img)
 	sprite.scale = Vector2(1.0, 1.0)
+	_apply_handle_pivot(sprite.texture, sprite.scale)
+
+## 将武器握把作为旋转中心
+##
+## 参数：
+##   texture - 纹理
+##   scale_value - 当前缩放
+func _apply_handle_pivot(texture: Texture2D, scale_value: Vector2) -> void:
+	if not sprite or not texture:
+		return
+	sprite.centered = false
+	var size: Vector2 = texture.get_size() * scale_value
+	var left_offset: float = _get_opaque_left_offset(texture) * scale_value.x
+	# 让武器从玩家向外延伸（握把靠近玩家）
+	sprite.position = Vector2(-left_offset, -size.y * 0.5)
+
+## 获取贴图非透明像素的最左边界
+##
+## 参数：
+##   texture - 纹理
+## 返回：
+##   左边界像素坐标（0表示无偏移）
+func _get_opaque_left_offset(texture: Texture2D) -> float:
+	var img: Image = texture.get_image()
+	if img == null:
+		return 0.0
+	var w: int = img.get_width()
+	var h: int = img.get_height()
+	var min_x: int = w
+	for y in range(h):
+		for x in range(w):
+			var color: Color = img.get_pixel(x, y)
+			if color.a > 0.01:
+				if x < min_x:
+					min_x = x
+	if min_x == w:
+		return 0.0
+	return float(min_x)
 
 ##############################################################################
 # 冷却计算
@@ -152,8 +192,15 @@ func _perform_summon() -> void:
 
 	var summon: CharacterBody2D = summon_scene.instantiate()
 	var summon_config: Dictionary = _calculate_summon_config()
-	
-	get_tree().root.add_child(summon)
+
+	var spawn_offset: Vector2 = Vector2(randf_range(-80.0, 80.0), randf_range(-80.0, 80.0))
+	if player:
+		summon.global_position = player.global_position + spawn_offset
+
+	var parent_node: Node = get_tree().root
+	if player and player.get_parent():
+		parent_node = player.get_parent()
+	parent_node.add_child(summon)
 	summon.initialize(summon_config, player)
 	active_summons.append(summon)
 
@@ -221,7 +268,7 @@ func _calculate_summon_config() -> Dictionary:
 		print("[SummonWeapon] 召唤暴击继承未解锁")
 
 	config["attack_speed"] = weapon_template.get("summon_attack_speed", 1.0)
-	config["attack_range"] = weapon_template.get("summon_attack_range", 100.0)
+	config["attack_range"] = weapon_template.get("summon_attack_range", 600.0)
 
 	## 图标优先使用weapon模板，否则回落到summon.csv
 	config["sprite_id"] = weapon_template.get("summon_sprite_id", "")

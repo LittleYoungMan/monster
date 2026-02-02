@@ -4,9 +4,9 @@
 
 [node name="ForgeUI" type="Control"]
 layout_mode = 3
-anchors_preset = 0
-offset_right = 40.0
-offset_bottom = 40.0
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
 script = ExtResource("1_6q32x")
 
 [node name="Panel" type="Panel" parent="."]
@@ -15,14 +15,14 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -300.0
-offset_top = -200.0
-offset_right = 300.0
-offset_bottom = 200.0
+offset_left = -700.0
+offset_top = -450.0
+offset_right = 700.0
+offset_bottom = 450.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="VBoxContainer" type="VBoxContainer" parent="Panel"]
+[node name="VBoxRoot" type="VBoxContainer" parent="Panel"]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
@@ -30,17 +30,101 @@ offset_left = 20.0
 offset_top = 20.0
 offset_right = -20.0
 offset_bottom = -20.0
+theme_override_constants/separation = 16
+
+[node name="Header" type="HBoxContainer" parent="Panel/VBoxRoot"]
+anchor_right = 1.0
 theme_override_constants/separation = 12
 
-[node name="TitleLabel" type="Label" parent="Panel/VBoxContainer"]
-text = "工坊（占位）"
-horizontal_alignment = 1
+[node name="TitleLabel" type="Label" parent="Panel/VBoxRoot/Header"]
+text = "工坊"
 theme_override_font_sizes/font_size = 28
 
-[node name="HintLabel" type="Label" parent="Panel/VBoxContainer"]
-text = "后续接入升阶/重铸逻辑"
-horizontal_alignment = 1
+[node name="OreLabel" type="Label" parent="Panel/VBoxRoot/Header"]
+size_flags_horizontal = 3
+horizontal_alignment = 2
+text = "矿石: 0"
 
-[node name="CloseButton" type="Button" parent="Panel/VBoxContainer"]
+[node name="Content" type="HBoxContainer" parent="Panel/VBoxRoot"]
+size_flags_vertical = 3
+theme_override_constants/separation = 20
+
+[node name="LeftPanel" type="VBoxContainer" parent="Panel/VBoxRoot/Content"]
+custom_minimum_size = Vector2(460, 0)
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="WeaponListLabel" type="Label" parent="Panel/VBoxRoot/Content/LeftPanel"]
+text = "武器列表"
+theme_override_font_sizes/font_size = 22
+
+[node name="WeaponGrid" type="GridContainer" parent="Panel/VBoxRoot/Content/LeftPanel"]
+columns = 3
+theme_override_constants/h_separation = 12
+theme_override_constants/v_separation = 12
+size_flags_vertical = 3
+
+[node name="RightPanel" type="VBoxContainer" parent="Panel/VBoxRoot/Content"]
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 10
+
+[node name="SelectedLabel" type="Label" parent="Panel/VBoxRoot/Content/RightPanel"]
+text = "未选择武器"
+theme_override_font_sizes/font_size = 20
+
+[node name="WeaponInfoLabel" type="Label" parent="Panel/VBoxRoot/Content/RightPanel"]
+text = ""
+
+[node name="AttrLabel" type="Label" parent="Panel/VBoxRoot/Content/RightPanel"]
+text = "词条列表"
+theme_override_font_sizes/font_size = 18
+
+[node name="AttributeList" type="VBoxContainer" parent="Panel/VBoxRoot/Content/RightPanel"]
+size_flags_vertical = 3
+theme_override_constants/separation = 6
+
+[node name="ActionGrid" type="GridContainer" parent="Panel/VBoxRoot/Content/RightPanel"]
+columns = 2
+theme_override_constants/h_separation = 10
+theme_override_constants/v_separation = 10
+
+[node name="UpgradeButton" type="Button" parent="Panel/VBoxRoot/Content/RightPanel/ActionGrid"]
+text = "升阶"
+custom_minimum_size = Vector2(180, 42)
+
+[node name="PunchButton" type="Button" parent="Panel/VBoxRoot/Content/RightPanel/ActionGrid"]
+text = "打孔"
+custom_minimum_size = Vector2(180, 42)
+
+[node name="RerollValueButton" type="Button" parent="Panel/VBoxRoot/Content/RightPanel/ActionGrid"]
+text = "敲数值"
+custom_minimum_size = Vector2(180, 42)
+
+[node name="RerollAffixButton" type="Button" parent="Panel/VBoxRoot/Content/RightPanel/ActionGrid"]
+text = "洗词条"
+custom_minimum_size = Vector2(180, 42)
+
+[node name="ReforgeButton" type="Button" parent="Panel/VBoxRoot/Content/RightPanel/ActionGrid"]
+text = "重铸"
+custom_minimum_size = Vector2(180, 42)
+
+[node name="LockButton" type="Button" parent="Panel/VBoxRoot/Content/RightPanel/ActionGrid"]
+text = "锁定/解锁"
+custom_minimum_size = Vector2(180, 42)
+
+[node name="MessageLabel" type="Label" parent="Panel/VBoxRoot/Content/RightPanel"]
+text = ""
+
+[node name="Footer" type="HBoxContainer" parent="Panel/VBoxRoot"]
+anchor_right = 1.0
+theme_override_constants/separation = 12
+
+[node name="RefreshButton" type="Button" parent="Panel/VBoxRoot/Footer"]
+text = "刷新"
+custom_minimum_size = Vector2(180, 44)
+
+[node name="CloseButton" type="Button" parent="Panel/VBoxRoot/Footer"]
 text = "关闭"
 custom_minimum_size = Vector2(180, 44)
+size_flags_horizontal = 3

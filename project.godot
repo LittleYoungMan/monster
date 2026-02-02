@@ -26,6 +26,7 @@ GameData="*res://scripts/autoload/game_data.gd"
 GameManager="*res://scripts/autoload/game_manager.gd"
 SpawnerConfig="*res://scripts/autoload/spawner_config.gd"
 ForgeManager="*res://scripts/autoload/forge_manager.gd"
+ShopManager="*res://scripts/autoload/shop_manager.gd"
 
 [display]
 

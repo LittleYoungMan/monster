@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(godot:*)",
+      "WebSearch",
+      "mcp__web-reader__webReader",
+      "Bash(awk:*)"
+    ]
+  }
+}

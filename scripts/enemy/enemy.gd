@@ -97,6 +97,10 @@ var slow_mult: float = 1.0
 var knockback_velocity: Vector2 = Vector2.ZERO
 const KNOCKBACK_DAMP: float = 8.0
 
+## 碰撞半径（用于与玩家保持距离）
+var enemy_collision_radius: float = 24.0
+var player_collision_radius: float = 32.0
+
 ##############################################################################
 # 远程投射物参数
 ##############################################################################
@@ -112,6 +116,21 @@ var should_retreat: bool = false
 
 ## 后撤计时器
 var retreat_timer: float = 0.0
+
+## 近战攻击后短暂后撤
+## 单位：秒
+## 作用：避免贴附玩家
+## 调整范围：0.1-0.8
+## 当前值：0.35
+var melee_retreat_timer: float = 0.0
+const MELEE_RETREAT_DURATION: float = 0.35
+
+## 近战后撤速度倍率
+## 单位：倍率
+## 作用：控制后撤距离
+## 调整范围：1.0-2.0
+## 当前值：1.2
+const MELEE_RETREAT_SPEED_MULT: float = 1.2
 
 ## 后撤持续时间（秒）
 const RETREAT_DURATION: float = 2.0
@@ -145,6 +164,53 @@ const BURST_MAX: int = 3
 @onready var health_bar: ProgressBar = $HealthBar
 
 ##############################################################################
+# 呼吸动画
+##############################################################################
+
+## 呼吸计时
+var breathe_time: float = 0.0
+
+## 呼吸/步态节奏（静止）
+## 单位：Hz
+## 作用：静止时的微弱起伏节奏
+## 调整范围：0.8-1.6
+## 当前值：1.15
+const BREATHE_IDLE_SPEED: float = 1.15
+
+## 呼吸/步态节奏（移动）
+## 单位：Hz
+## 作用：移动时的步态起伏节奏
+## 调整范围：2.0-4.0
+## 当前值：3.0
+const BREATHE_MOVE_SPEED: float = 3.0
+
+## 静止呼吸上移幅度
+## 单位：像素
+## 作用：静止时轻微上移
+## 调整范围：0.3-1.0
+## 当前值：0.6
+const BREATHE_IDLE_OFFSET: float = 0.6
+
+## 移动步态上下抖动幅度
+## 单位：像素
+## 作用：移动时的轻微步态起伏（不缩放）
+## 调整范围：0.6-2.0
+## 当前值：1.2
+const MOVE_BOB_OFFSET: float = 1.2
+
+## 步态波形锐化
+## 单位：倍率
+## 作用：让移动时的起伏更像“脚步”
+## 调整范围：1.0-2.0
+## 当前值：1.4
+const MOVE_BOB_SHARPNESS: float = 1.4
+
+## 记录初始尺度与位置
+var base_sprite_scale: Vector2 = Vector2.ONE
+var base_sprite_position: Vector2 = Vector2.ZERO
+var breathe_initialized: bool = false
+
+##############################################################################
 # 初始化
 ##############################################################################
 
@@ -175,6 +241,7 @@ func initialize(id: String, current_minute: int) -> void:
 	var players: Array[Node] = get_tree().get_nodes_in_group("player")
 	if players.size() > 0:
 		player = players[0]
+		player_collision_radius = _get_player_collision_radius()
 
 	## 初始化血条显示
 	if health_bar:
@@ -187,6 +254,11 @@ func initialize(id: String, current_minute: int) -> void:
 func _ready() -> void:
 	## 统一加入敌人组，方便查询与统计
 	add_to_group("enemy")
+	breathe_time = randf() * TAU
+
+func _process(delta: float) -> void:
+	## 呼吸动画更新
+	_update_breathe(delta)
 
 ##############################################################################
 # 属性计算（成长）
@@ -320,10 +392,19 @@ func _setup_collision() -> void:
 	var shape: CircleShape2D = CircleShape2D.new()
 	shape.radius = radius
 	collision_shape.shape = shape
+	enemy_collision_radius = radius
 
 	var hurt_shape: CircleShape2D = CircleShape2D.new()
 	hurt_shape.radius = radius + 10.0
 	hurt_box_shape.shape = hurt_shape
+
+func _get_player_collision_radius() -> float:
+	if not player or not is_instance_valid(player):
+		return player_collision_radius
+	var shape_node: CollisionShape2D = player.get_node_or_null("CollisionShape2D")
+	if shape_node and shape_node.shape is CircleShape2D:
+		return (shape_node.shape as CircleShape2D).radius
+	return player_collision_radius
 
 ##############################################################################
 # 贴图加载
@@ -341,6 +422,7 @@ func _load_sprite() -> void:
 		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	else:
 		_generate_placeholder_sprite()
+	_init_breathe_base()
 
 func _generate_placeholder_sprite() -> void:
 	var img: Image = Image.create(64, 64, false, Image.FORMAT_RGBA8)
@@ -349,6 +431,38 @@ func _generate_placeholder_sprite() -> void:
 	else:
 		img.fill(Color(0.8, 0.2, 0.2, 1.0))
 	sprite.texture = ImageTexture.create_from_image(img)
+	_init_breathe_base()
+
+func _init_breathe_base() -> void:
+	if not sprite:
+		return
+	base_sprite_scale = sprite.scale
+	base_sprite_position = sprite.position
+	breathe_initialized = true
+
+func _update_breathe(delta: float) -> void:
+	if not breathe_initialized or not sprite:
+		return
+	## 移动强度（0=静止，1=全速）
+	var move_speed: float = max(speed, 1.0)
+	var speed_ratio: float = clamp(velocity.length() / move_speed, 0.0, 1.0)
+
+	## 统一节奏（移动更快，静止更慢）
+	var speed_value: float = lerp(BREATHE_IDLE_SPEED, BREATHE_MOVE_SPEED, speed_ratio)
+	breathe_time += delta * speed_value
+
+	if speed_ratio > 0.05:
+		## 移动：只做步态起伏，不做缩放
+		var step_wave: float = abs(sin(breathe_time))
+		var step_centered: float = (step_wave - 0.5) * 2.0
+		var step_sharp: float = sign(step_centered) * pow(abs(step_centered), MOVE_BOB_SHARPNESS)
+		sprite.scale = base_sprite_scale
+		sprite.position = base_sprite_position + Vector2(0.0, step_sharp * MOVE_BOB_OFFSET)
+	else:
+		## 静止：极弱上下呼吸
+		var wave: float = sin(breathe_time)
+		sprite.scale = base_sprite_scale
+		sprite.position = base_sprite_position + Vector2(0.0, wave * BREATHE_IDLE_OFFSET)
 
 ##############################################################################
 # AI主循环
@@ -381,6 +495,12 @@ func _physics_process(delta: float) -> void:
 			_retreat_from_player(delta)
 			return
 
+	## 近战命中后短暂后撤
+	if melee_retreat_timer > 0.0 and attack_type == "近战":
+		melee_retreat_timer -= delta
+		_retreat_from_player(delta, MELEE_RETREAT_SPEED_MULT)
+		return
+
 	if attack_type == "远程":
 		_ai_ranged_attack(delta)
 	else:
@@ -392,9 +512,28 @@ func _physics_process(delta: float) -> void:
 		knockback_velocity = knockback_velocity.lerp(Vector2.ZERO, delta * KNOCKBACK_DAMP)
 
 	move_and_slide()
+	## 限制在地图边界内
+	_clamp_to_map_bounds()
 
 	if health_bar:
 		health_bar.value = current_hp
+
+func _clamp_to_map_bounds() -> void:
+	## 限制敌人在地图范围内
+	var bounds: Rect2 = GameManager.map_bounds
+	if bounds.size == Vector2.ZERO:
+		return
+	var radius: float = enemy_collision_radius
+	var min_x: float = bounds.position.x + radius
+	var max_x: float = bounds.position.x + bounds.size.x - radius
+	var min_y: float = bounds.position.y + radius
+	var max_y: float = bounds.position.y + bounds.size.y - radius
+	var clamped: Vector2 = Vector2(
+		clamp(global_position.x, min_x, max_x),
+		clamp(global_position.y, min_y, max_y)
+	)
+	if clamped != global_position:
+		global_position = clamped
 
 ##############################################################################
 # 近战AI
@@ -402,14 +541,30 @@ func _physics_process(delta: float) -> void:
 
 func _ai_melee_attack(delta: float) -> void:
 	var distance: float = global_position.distance_to(player.global_position)
-	if distance > attack_range:
-		var direction: Vector2 = (player.global_position - global_position).normalized()
-		velocity = direction * _get_current_speed()
+	var min_separation: float = enemy_collision_radius + player_collision_radius
+	var desired_distance: float = max(min_separation + 12.0, attack_range * 0.9)
+	var approach_range: float = attack_range * 1.1
+
+	if distance > approach_range:
+		# 远距离加速靠近
+		var dir: Vector2 = (player.global_position - global_position).normalized()
+		velocity = dir * _get_current_speed()
+	elif distance < min_separation:
+		# 贴脸时主动后撤，避免“粘住”
+		var push_dir: Vector2 = (global_position - player.global_position).normalized()
+		if push_dir == Vector2.ZERO:
+			push_dir = Vector2.RIGHT
+		velocity = push_dir * _get_current_speed() * 0.9
 	else:
-		velocity = Vector2.ZERO
-		if attack_timer <= 0:
-			_perform_melee_attack()
-			attack_timer = attack_cooldown
+		# 在理想距离内以小幅侧移保持环绕，减少贴脸
+		var to_player: Vector2 = (player.global_position - global_position).normalized()
+		var tangent: Vector2 = Vector2(-to_player.y, to_player.x)
+		var radial_adjust: float = clamp(distance - desired_distance, -8.0, 8.0) / 8.0
+		velocity = to_player * _get_current_speed() * radial_adjust * 0.6 + tangent * _get_current_speed() * 0.4
+
+	if distance <= attack_range and attack_timer <= 0:
+		_perform_melee_attack()
+		attack_timer = attack_cooldown
 
 ##############################################################################
 # 远程AI
@@ -464,6 +619,8 @@ func _perform_melee_attack() -> void:
 		var final_damage: float = _calculate_final_damage()
 		player.take_damage(final_damage)
 		print("[Enemy] 近战命中: ", int(final_damage))
+		## 命中后触发短暂后撤
+		melee_retreat_timer = MELEE_RETREAT_DURATION
 
 ## 远程攻击：发射投射物
 func _perform_ranged_attack() -> void:
@@ -514,9 +671,9 @@ func _calculate_final_damage() -> float:
 # 退避与强化
 ##############################################################################
 
-func _retreat_from_player(delta: float) -> void:
+func _retreat_from_player(delta: float, speed_mult: float = 1.5) -> void:
 	var direction: Vector2 = (global_position - player.global_position).normalized()
-	velocity = direction * _get_current_speed() * 1.5
+	velocity = direction * _get_current_speed() * speed_mult
 
 func _get_current_speed() -> float:
 	if slow_timer > 0.0:
@@ -537,11 +694,9 @@ func _enhance_split_orb() -> void:
 
 ## 受击入口：玩家武器碰撞触发
 func _on_hurt_box_area_entered(area: Area2D) -> void:
+	# 近战武器伤害由武器脚本主动结算，避免接触判定造成“无动画掉血”
 	if area.is_in_group("weapon_attack"):
-		var weapon: Node = area.get_parent()
-		if weapon.has_method("calculate_damage"):
-			var dmg: float = weapon.calculate_damage()
-			take_damage(dmg)
+		return
 
 ## 受伤计算（护甲减伤）
 func take_damage(dmg: float) -> void:
@@ -554,13 +709,31 @@ func take_damage(dmg: float) -> void:
 ## 死亡处理（掉落金币/经验/矿石）
 func die() -> void:
 	var gold: int = int(monster_data.get("Money", 1))
-	GameManager.add_gold(gold)
-	GameManager.add_exp(3)
+	var exp_amount: int = 3
+	_spawn_pickup("gold_exp", gold, exp_amount, 0)
 	if randf() < 0.1:
-		GameManager.add_ore(1)
+		_spawn_pickup("ore", 0, 0, 1)
 	print("[Enemy] 死亡: ", monster_data.get("NameZH", monster_id))
 	_spawn_death_effect()
 	queue_free()
+
+## 生成拾取物（金币/经验/矿石）
+func _spawn_pickup(pickup_type: String, gold: int, exp_amount: int, ore_amount: int) -> void:
+	var pickup_scene: PackedScene = load("res://scenes/world/pickup.tscn")
+	if not pickup_scene:
+		return
+	var pickup: Area2D = pickup_scene.instantiate()
+	var offset: Vector2 = Vector2(randf_range(-12.0, 12.0), randf_range(-12.0, 12.0))
+	pickup.global_position = global_position + offset
+	var config: Dictionary = {
+		"type": pickup_type,
+		"gold": gold,
+		"exp": exp_amount,
+		"ore": ore_amount
+	}
+	if pickup.has_method("initialize"):
+		pickup.initialize(config)
+	get_parent().add_child(pickup)
 
 ## 死亡特效/召唤（由remake文本决定）
 func _spawn_death_effect() -> void:
@@ -613,11 +786,14 @@ func _spawn_death_minions(minion_id: String, count: int, hp_mult: float = 1.0) -
 		var angle: float = (float(i) / float(count)) * TAU
 		var offset: Vector2 = Vector2(cos(angle), sin(angle)) * 50.0
 		minion.global_position = global_position + offset
-		minion.initialize(monster_id if minion_id.is_empty() else minion_id, GameManager.get_current_minute() if GameManager.has_method("get_current_minute") else 0)
+		var spawn_id: String = monster_id if minion_id.is_empty() else minion_id
+		var spawn_minute: int = GameManager.get_current_minute() if GameManager.has_method("get_current_minute") else 0
+		var parent_node: Node = get_parent()
+		if parent_node:
+			parent_node.call_deferred("add_child", minion)
+		minion.call_deferred("initialize", spawn_id, spawn_minute)
 		if hp_mult != 1.0:
-			minion.max_hp *= hp_mult
-			minion.current_hp *= hp_mult
-		get_parent().add_child(minion)
+			minion.call_deferred("_apply_spawn_hp_mult", hp_mult)
 	print("[Enemy] 死亡召唤: ", count, "只 ", minion_id)
 
 ## 死亡弹幕
@@ -638,10 +814,22 @@ func _spawn_death_projectiles(count: int) -> void:
 			"splash_radius": 0.0,
 			"sprite_id": ""
 		}
-		projectile.initialize(projectile_data)
 		projectile.global_position = global_position
-		get_parent().add_child(projectile)
+		var parent_node: Node = get_parent()
+		if parent_node:
+			parent_node.call_deferred("add_child", projectile)
+		projectile.call_deferred("initialize", projectile_data)
 	print("[Enemy] 死亡弹幕: ", count, "发")
+
+## 出生后应用血量倍率（用于死亡召唤）
+##
+## 参数：
+##   hp_mult - 生命倍率
+func _apply_spawn_hp_mult(hp_mult: float) -> void:
+	if hp_mult == 1.0:
+		return
+	max_hp *= hp_mult
+	current_hp *= hp_mult
 
 ##############################################################################
 # 状态效果

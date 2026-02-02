@@ -32,6 +32,7 @@ extends Control
 ##############################################################################
 
 func _ready() -> void:
+	## 初始化结算界面
 	## 显示结算数据
 	_display_stats()
 	
@@ -49,6 +50,7 @@ func _ready() -> void:
 ##############################################################################
 
 func _display_stats() -> void:
+	## 刷新结算列表
 	## 清空旧数据
 	for child: Node in stats_container.get_children():
 		child.queue_free()
@@ -76,6 +78,7 @@ func _display_stats() -> void:
 
 ## 收集游戏统计数据
 func _gather_stats() -> Dictionary:
+	## 汇总结算数据
 	var stats: Dictionary = {}
 	
 	## 基础数据
@@ -103,6 +106,7 @@ func _gather_stats() -> Dictionary:
 
 ## 查找玩家节点
 func _find_player() -> CharacterBody2D:
+	## 通过分组获取玩家
 	var players: Array[Node] = get_tree().get_nodes_in_group("player")
 	if players.size() > 0:
 		return players[0]
@@ -110,6 +114,7 @@ func _find_player() -> CharacterBody2D:
 
 ## 统计武器数量
 func _count_weapons(player: CharacterBody2D) -> int:
+	## 统计已装备武器数量
 	if not player.has("weapon_slots"):
 		return 0
 	
@@ -124,6 +129,7 @@ func _count_weapons(player: CharacterBody2D) -> int:
 ##############################################################################
 
 func _on_restart_pressed() -> void:
+	## 点击“重新开始”
 	## 重置GameManager状态
 	GameManager.reset_game()
 	
@@ -131,6 +137,7 @@ func _on_restart_pressed() -> void:
 	get_tree().change_scene_to_file("res://scenes/ui/character_selection.tscn")
 
 func _on_quit_pressed() -> void:
+	## 点击“退出游戏”
 	## 退出游戏
 	get_tree().quit()
 
@@ -139,6 +146,7 @@ func _on_quit_pressed() -> void:
 ##############################################################################
 
 func _center_panel() -> void:
+	## 预留：居中布局
 	## 确保面板居中显示
 	## 注意：需要在场景中设置Panel的锚点为Center
 	pass

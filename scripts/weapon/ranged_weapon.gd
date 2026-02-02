@@ -104,9 +104,11 @@ func _load_sprite() -> void:
 
 	var sprite_path: String = "res://assets/PIC/wuqi/icon/256/" + icon_id + ".png"
 	if ResourceLoader.exists(sprite_path):
-		sprite.texture = load(sprite_path)
+		var texture: Texture2D = load(sprite_path)
+		sprite.texture = texture
 		sprite.scale = Vector2(0.25, 0.25)
 		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		_apply_handle_pivot(texture, sprite.scale)
 		print("[RangedWeapon] 图标加载成功: ", sprite_path)
 	else:
 		_generate_placeholder_sprite()
@@ -122,6 +124,46 @@ func _generate_placeholder_sprite() -> void:
 	var texture: ImageTexture = ImageTexture.create_from_image(img)
 	sprite.texture = texture
 	sprite.scale = Vector2(1.0, 1.0)
+	_apply_handle_pivot(texture, sprite.scale)
+
+## 将武器握把作为旋转中心
+##
+## 参数：
+##   texture - 纹理
+##   scale_value - 当前缩放
+func _apply_handle_pivot(texture: Texture2D, scale_value: Vector2) -> void:
+	if not sprite or not texture:
+		return
+	sprite.centered = false
+	var size: Vector2 = texture.get_size() * scale_value
+	var left_offset: float = _get_opaque_left_offset(texture) * scale_value.x
+	# 让武器从玩家向外延伸（握把靠近玩家）
+	sprite.position = Vector2(-left_offset, -size.y * 0.5)
+	if shoot_point:
+		shoot_point.position = Vector2(size.x * 0.9, 0.0)
+
+## 获取贴图非透明像素的最左边界
+##
+## 参数：
+##   texture - 纹理
+## 返回：
+##   左边界像素坐标（0表示无偏移）
+func _get_opaque_left_offset(texture: Texture2D) -> float:
+	var img: Image = texture.get_image()
+	if img == null:
+		return 0.0
+	var w: int = img.get_width()
+	var h: int = img.get_height()
+	var min_x: int = w
+	for y in range(h):
+		for x in range(w):
+			var color: Color = img.get_pixel(x, y)
+			if color.a > 0.01:
+				if x < min_x:
+					min_x = x
+	if min_x == w:
+		return 0.0
+	return float(min_x)
 
 ##############################################################################
 # 冷却计算
@@ -149,9 +191,10 @@ func _on_attack_timer_timeout() -> void:
 
 ## 发射投射物
 func _perform_attack() -> void:
-	var shoot_direction: Vector2 = _get_shoot_direction()
-	if shoot_direction == Vector2.ZERO:
+	var nearest_enemy: Node2D = _find_nearest_enemy()
+	if not nearest_enemy:
 		return
+	var shoot_direction: Vector2 = (nearest_enemy.global_position - global_position).normalized()
 
 	var damage: float = calculate_damage()
 	_fire_burst(shoot_direction, damage)
@@ -234,30 +277,42 @@ func _get_shoot_direction() -> Vector2:
 	var nearest_enemy: Node2D = _find_nearest_enemy()
 	if nearest_enemy:
 		return (nearest_enemy.global_position - global_position).normalized()
-
-	var mouse_pos: Vector2 = get_global_mouse_position()
-	return (mouse_pos - global_position).normalized()
+	return Vector2.ZERO
 
 func _get_target_position(base_dir: Vector2) -> Vector2:
 	var nearest_enemy: Node2D = _find_nearest_enemy()
 	if nearest_enemy:
 		return nearest_enemy.global_position
-	return global_position + base_dir * weapon_template.get("attack_range", 500.0)
+	var attack_range: float = weapon_template.get("attack_range", 500.0)
+	attack_range = max(25.0, attack_range)
+	return global_position + base_dir * attack_range
 
 ## 查找最近敌人
 func _find_nearest_enemy() -> Node2D:
 	var attack_range: float = weapon_template.get("attack_range", 500.0)
-	var all_enemies: Array[Node] = get_tree().get_nodes_in_group("enemy")
+	attack_range = max(25.0, attack_range)
+	## 先找敌人，若无则找矿点
+	var nearest_enemy: Node2D = _find_nearest_in_group("enemy", attack_range)
+	if nearest_enemy:
+		return nearest_enemy
+	return _find_nearest_in_group("mine", attack_range)
 
-	var nearest_enemy: Node2D = null
+## 查找指定分组内最近目标
+##
+## 参数：
+##   group_name - 分组名
+##   range_limit - 搜索半径
+func _find_nearest_in_group(group_name: String, range_limit: float) -> Node2D:
+	var nodes: Array[Node] = get_tree().get_nodes_in_group(group_name)
+	var nearest: Node2D = null
 	var nearest_distance: float = INF
-	for enemy: Node in all_enemies:
-		if enemy is Node2D:
-			var distance: float = global_position.distance_to(enemy.global_position)
-			if distance <= attack_range and distance < nearest_distance:
+	for node: Node in nodes:
+		if node is Node2D:
+			var distance: float = global_position.distance_to(node.global_position)
+			if distance <= range_limit and distance < nearest_distance:
 				nearest_distance = distance
-				nearest_enemy = enemy
-	return nearest_enemy
+				nearest = node
+	return nearest
 
 ##############################################################################
 # 伤害计算

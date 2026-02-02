@@ -157,20 +157,20 @@ func _unhandled_input(event: InputEvent) -> void:
 func _enter_shop() -> void:
 	if triggered:
 		return
-	
+
 	triggered = true
-	
+
 	## 获取ShopUI并显示
 	var shop_ui: Control = _find_shop_ui()
-	if shop_ui and shop_ui.has_method("show_shop"):
+	if shop_ui:
 		shop_ui.show_shop()
-		print("[ShopDoor] 打开商店UI")
+		print("[ShopDoor] 打开商店UI, visible=", shop_ui.visible)
 	else:
-		push_error("[ShopDoor] 找不到ShopUI或show_shop方法")
-	
+		push_error("[ShopDoor] 找不到ShopUI")
+
 	## 播放进入音效（可选）
 	_play_enter_sound()
-	
+
 	## 门消失
 	_despawn()
 

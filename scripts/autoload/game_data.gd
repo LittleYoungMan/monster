@@ -71,6 +71,20 @@ const CDR_CAP: float = 60.0
 ## 暴击倍率基础值（基础1.5倍）
 const CRIT_BASE_MULTIPLIER: float = 1.5
 
+## 减速持续时间
+## 单位：秒
+## 作用：通用减速效果持续时间
+## 调整范围：1-5
+## 当前值：3
+const SLOW_DURATION: float = 3.0
+
+## 减速倍率
+## 单位：倍数
+## 作用：通用减速移动倍率（越小越慢）
+## 调整范围：0.3-0.9
+## 当前值：0.7
+const SLOW_MULTIPLIER: float = 0.7
+
 ##############################################################################
 # 生命周期回调
 ##############################################################################
@@ -79,11 +93,13 @@ func _ready() -> void:
 	print("[GameData] 开始加载数据...")
 	_load_characters()
 	_load_weapon_data()
+	_load_shop_cards()
 	_load_monsters()
 	_load_monster_bosses()
 	print("[GameData] 数据加载完成!")
 	print("  - 角色数量: ", characters.size())
 	print("  - 武器数量: ", weapons.size())
+	print("  - 商店卡数量: ", shop_cards.size())
 	print("  - 投射物数量: ", projectiles.size())
 	print("  - 召唤单位数量: ", summon_units.size())
 	print("  - 怪物数量: ", monsters.size())
@@ -478,13 +494,152 @@ func is_boss(monster_id: String) -> bool:
 # 商店卡牌（预留）
 ##############################################################################
 
+## 加载商店卡数据（shop.csv）
+##
+## 参数：无
+## 返回：无
 func _load_shop_cards() -> void:
-	# TODO: 实现商店卡牌读取
-	pass
+	var csv_path: String = "res://assets/data/shop.csv"
+	if not FileAccess.file_exists(csv_path):
+		push_warning("[GameData] 商店卡数据文件不存在: " + csv_path)
+		return
 
+	var file: FileAccess = FileAccess.open(csv_path, FileAccess.READ)
+	if file == null:
+		push_error("[GameData] 无法打开商店卡数据文件: " + csv_path)
+		return
+
+	var header_line: String = file.get_line()
+	var headers: PackedStringArray = _parse_csv_line(header_line)
+
+	# 处理BOM
+	if headers.size() > 0:
+		headers[0] = headers[0].replace("\ufeff", "")
+
+	while not file.eof_reached():
+		var line: String = file.get_line()
+		if line.strip_edges().is_empty():
+			continue
+		var values: PackedStringArray = _parse_csv_line(line)
+		if values.size() < headers.size():
+			continue
+
+		var raw: Dictionary = {}
+		for i: int in range(headers.size()):
+			raw[headers[i].strip_edges()] = values[i].strip_edges()
+
+		var card_id: String = _get_raw_first(raw, ["CardID（卡ID）", "CardID", "card_id"])
+		if card_id.is_empty():
+			continue
+
+		var card_name: String = _get_raw_first(raw, ["CardName（卡名）", "CardName", "name"])
+		var rarity_raw: String = _get_raw_first(raw, ["Rarity（稀有度）", "Rarity", "rarity"])
+		var cap_raw: String = _get_raw_first(raw, ["Cap（上限）", "Cap", "cap"])
+		var price_raw: String = _get_raw_first(raw, ["Price（价格）", "Price", "price"])
+		var tags_raw: String = _get_raw_first(raw, ["Tags（标签）", "Tags", "tags"])
+		var effects_raw: String = _get_raw_first(raw, ["EffectsEN（效果英文合集）", "EffectsEN", "effects"])
+
+		var effects: Array = _parse_shop_effects(effects_raw)
+
+		var card_data: Dictionary = {
+			"id": card_id,
+			"name": card_name,
+			"rarity": _convert_shop_rarity(rarity_raw),
+			"cap": int(_parse_float(cap_raw)),
+			"price": int(_parse_float(price_raw)),
+			"tags": tags_raw,
+			"effects": effects
+		}
+
+		shop_cards[card_id] = card_data
+
+	file.close()
+	print("[GameData] 商店卡数据加载完成: ", shop_cards.size(), " 条")
+
+## 获取商店卡数据
+##
+## 参数：
+##   card_id - 卡牌ID
+## 返回：卡牌数据字典
 func get_shop_card(card_id: String) -> Dictionary:
-	# TODO: 实现商店卡牌查询
+	if card_id in shop_cards:
+		return shop_cards[card_id]
 	return {}
+
+##############################################################################
+# 商店卡解析辅助
+##############################################################################
+
+## 解析卡牌效果文本
+##
+## 参数：
+##   effect_text - 效果字符串
+## 返回：效果数组
+func _parse_shop_effects(effect_text: String) -> Array:
+	var results: Array = []
+	if effect_text.is_empty():
+		return results
+
+	var cleaned: String = effect_text.replace("，", ",").replace("；", ",").replace("、", ",")
+	var parts: PackedStringArray = cleaned.split(",", false)
+	for part: String in parts:
+		var trimmed: String = part.strip_edges()
+		if trimmed.is_empty():
+			continue
+		var kv: PackedStringArray = trimmed.split(":")
+		if kv.size() < 2:
+			continue
+		var key: String = kv[0].strip_edges()
+		var value_str: String = kv[1].strip_edges()
+		if value_str.begins_with("+"):
+			value_str = value_str.substr(1)
+		value_str = value_str.replace("%", "")
+
+		var value: float = _parse_float(value_str)
+		var stat_key: String = _normalize_shop_effect_key(key)
+		results.append({
+			"stat": stat_key,
+			"value": value,
+			"raw": key
+		})
+	return results
+
+## 规范化卡牌属性名
+##
+## 参数：
+##   raw_key - 原始字段名
+## 返回：规范化字段名
+func _normalize_shop_effect_key(raw_key: String) -> String:
+	var key: String = raw_key.strip_edges()
+	var mapping: Dictionary = {
+		"SummonCooldownInheritPct": "summon_cdr_inherit",
+		"SummonCooldownInherit": "summon_cdr_inherit",
+		"SummonCritInheritPct": "summon_crit_inherit",
+		"SummonCritInherit": "summon_crit_inherit",
+		"SummonCount": "summon_count",
+		"EnemyMaterialDropChance": "EnemyMaterialDropRate"
+	}
+	if mapping.has(key):
+		return mapping[key]
+	return key
+
+## 转换卡牌稀有度（中文->内部）
+##
+## 参数：
+##   raw_rarity - 原始稀有度
+## 返回：内部稀有度字符串
+func _convert_shop_rarity(raw_rarity: String) -> String:
+	match raw_rarity:
+		"白":
+			return "white"
+		"蓝":
+			return "blue"
+		"紫":
+			return "purple"
+		"金":
+			return "gold"
+		_:
+			return "white"
 
 ##############################################################################
 # 武器/投射物/召唤单位加载
@@ -633,7 +788,7 @@ func _load_summon_units() -> void:
 			"attack_mode": raw.get("AttackMode", ""),
 			"base_damage": _parse_float(_get_raw_first(raw, ["BaseDamage", "基础伤害", "基础伤害(BaseDamage)"])) ,
 			"notes": _get_raw_first(raw, ["Notes", "备注", "说明"], ""),
-			"sprite_id": _get_raw_first(raw, ["SpriteID", "贴图ID", "精灵ID"], "")
+			"sprite_id": _get_raw_first(raw, ["SpriteID", "贴图ID", "精灵ID", "精灵ID（SpriteID）"], "")
 		}
 		summon_units[summon_id] = summon_data
 	file.close()

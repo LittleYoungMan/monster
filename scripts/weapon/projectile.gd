@@ -156,8 +156,10 @@ var melee_arc_lifetime: float = 0.12
 ##############################################################################
 
 func _ready() -> void:
-	area_entered.connect(_on_area_entered)
-	body_entered.connect(_on_body_entered)
+	if not area_entered.is_connected(_on_area_entered):
+		area_entered.connect(_on_area_entered)
+	if not body_entered.is_connected(_on_body_entered):
+		body_entered.connect(_on_body_entered)
 	collision_layer = CollisionLayers.get_layer_mask(CollisionLayers.PLAYER_PROJECTILE)
 	collision_mask = CollisionLayers.combine_layers([
 		CollisionLayers.ENEMY,
@@ -263,6 +265,25 @@ func _generate_placeholder_sprite() -> void:
 	sprite.texture = ImageTexture.create_from_image(img)
 	sprite.scale = Vector2(1.0, 1.0)
 
+func _spawn_vfx(vfx_id: String, pos: Vector2, scale_mult: float = 1.0) -> void:
+	if vfx_id.is_empty():
+		return
+	var vfx_path: String = "res://assets/PIC/wuqi/VFX/256/" + vfx_id + ".png"
+	if not ResourceLoader.exists(vfx_path):
+		return
+	var vfx_node: Node2D = Node2D.new()
+	var vfx_sprite: Sprite2D = Sprite2D.new()
+	vfx_sprite.texture = load(vfx_path)
+	vfx_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	vfx_sprite.scale = Vector2(0.25, 0.25) * scale_mult
+	vfx_node.add_child(vfx_sprite)
+	get_parent().add_child(vfx_node)
+	vfx_node.global_position = pos
+	var tween: Tween = vfx_node.create_tween()
+	tween.tween_property(vfx_sprite, "scale", vfx_sprite.scale * 1.6, 0.2)
+	tween.parallel().tween_property(vfx_sprite, "modulate:a", 0.0, 0.2)
+	tween.tween_callback(vfx_node.queue_free)
+
 ##############################################################################
 # 物理更新
 ##############################################################################
@@ -350,6 +371,11 @@ func _on_area_entered(area: Area2D) -> void:
 func _on_body_entered(body: Node2D) -> void:
 	if body.is_in_group("wall"):
 		_hit_wall()
+	elif body.is_in_group("mine"):
+		## 命中矿点则触发采集
+		if body.has_method("take_damage"):
+			body.take_damage(damage)
+		queue_free()
 
 func _hit_enemy(enemy: Node) -> void:
 	if enemy in hit_enemies:
@@ -357,6 +383,8 @@ func _hit_enemy(enemy: Node) -> void:
 
 	hit_enemies.append(enemy)
 	var actual_damage: float = damage * current_damage_mult
+	if not explode:
+		_spawn_vfx(vfx_hit_id, global_position, 1.0)
 
 	## 爆炸类型：直接AOE后销毁
 	if explode and explode_radius_px > 0.0:
@@ -457,6 +485,8 @@ func _chain_to_next(base_damage: float, from_pos: Vector2) -> void:
 		remaining -= 1
 
 func _explode_at(pos: Vector2, base_damage: float) -> void:
+	var vfx_id: String = vfx_hit_id if not vfx_hit_id.is_empty() else "vfx_mask_explosion_core"
+	_spawn_vfx(vfx_id, pos, 1.4)
 	var enemies: Array[Node] = get_tree().get_nodes_in_group("enemy")
 	for e: Node in enemies:
 		if e is Node2D:

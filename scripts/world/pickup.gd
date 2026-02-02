@@ -1,0 +1,160 @@
+##############################################################################
+# Pickup - 掉落拾取物
+#
+# 设计目的：
+# - 敌人死亡掉落金币/经验
+# - 矿点掉落矿石
+# - 玩家碰撞拾取后生效
+##############################################################################
+extends Area2D
+
+##############################################################################
+# 类型
+##############################################################################
+
+## 金币/经验拾取物
+const TYPE_GOLD_EXP: String = "gold_exp"
+
+## 矿石拾取物
+const TYPE_ORE: String = "ore"
+
+##############################################################################
+# 运行期数据
+##############################################################################
+
+## 拾取物类型
+var pickup_type: String = TYPE_GOLD_EXP
+
+## 金币数量
+var gold_amount: int = 0
+
+## 经验数量
+var exp_amount: int = 0
+
+## 矿石数量
+var ore_amount: int = 0
+
+## 玩家引用
+var player: CharacterBody2D = null
+
+## 吸附速度
+## 单位：像素/秒
+## 作用：掉落向玩家吸附速度
+## 调整范围：200-800
+## 当前值：420
+const PICKUP_SPEED: float = 420.0
+
+## 默认拾取范围
+## 单位：像素
+## 作用：玩家未提供拾取范围时的默认值
+## 调整范围：40-120
+## 当前值：80
+const DEFAULT_PICKUP_RANGE: float = 80.0
+
+## 最小拾取范围
+## 单位：像素
+## 作用：限制玩家过小拾取范围
+## 调整范围：20-80
+## 当前值：40
+const MIN_PICKUP_RANGE: float = 40.0
+
+## 拾取物占位大小
+## 单位：像素
+## 作用：视觉大小（无贴图时）
+## 调整范围：12-32
+## 当前值：24
+const PICKUP_ICON_SIZE: int = 24
+
+##############################################################################
+# 节点引用
+##############################################################################
+
+@onready var sprite: Sprite2D = $Sprite2D
+
+##############################################################################
+# 初始化
+##############################################################################
+
+## 节点就绪
+func _ready() -> void:
+	add_to_group("pickup")
+	collision_layer = CollisionLayers.get_layer_mask(CollisionLayers.PICKUP)
+	collision_mask = CollisionLayers.get_layer_mask(CollisionLayers.PLAYER)
+	z_index = 6
+	body_entered.connect(_on_body_entered)
+	player = get_tree().get_first_node_in_group("player")
+	# 默认隐藏并关闭碰撞，等待 initialize 设置内容后再启用
+	visible = false
+	monitoring = false
+	if has_node("CollisionShape2D"):
+		$CollisionShape2D.disabled = true
+
+## 吸附移动（基于拾取范围）
+func _physics_process(delta: float) -> void:
+	if not player or not is_instance_valid(player):
+		return
+	var range: float = DEFAULT_PICKUP_RANGE
+	if player.has_method("get_pickup_range"):
+		range = max(MIN_PICKUP_RANGE, player.get_pickup_range())
+	var dist: float = global_position.distance_to(player.global_position)
+	if dist <= range:
+		var dir: Vector2 = (player.global_position - global_position).normalized()
+		var speed: float = PICKUP_SPEED * (1.0 + (range - dist) / max(range, 1.0))
+		global_position += dir * speed * delta
+
+## 初始化拾取物
+##
+## 参数：
+##   config - type/gold/exp/ore
+func initialize(config: Dictionary) -> void:
+	pickup_type = config.get("type", TYPE_GOLD_EXP)
+	gold_amount = int(config.get("gold", 0))
+	exp_amount = int(config.get("exp", 0))
+	ore_amount = int(config.get("ore", 0))
+	_apply_visual()
+	visible = true
+	monitoring = true
+	if has_node("CollisionShape2D"):
+		$CollisionShape2D.disabled = false
+	if sprite and sprite.texture:
+		sprite.visible = true
+
+##############################################################################
+# 拾取
+##############################################################################
+
+## 玩家触碰拾取
+func _on_body_entered(body: Node2D) -> void:
+	if not body.is_in_group("player"):
+		return
+	if pickup_type == TYPE_ORE:
+		GameManager.add_ore(ore_amount)
+	else:
+		if gold_amount > 0:
+			GameManager.add_gold(gold_amount)
+		if exp_amount > 0:
+			GameManager.add_exp(exp_amount)
+	queue_free()
+
+##############################################################################
+# 视觉
+##############################################################################
+
+## 设置占位视觉（无贴图时）
+func _apply_visual() -> void:
+	if not sprite:
+		return
+	# 如果有专门的贴图路径就加载，否则隐藏 sprite，避免绿色占位块
+	var texture_path: String = ""
+	match pickup_type:
+		TYPE_ORE:
+			texture_path = ""
+		TYPE_GOLD_EXP:
+			texture_path = ""
+	if texture_path != "" and ResourceLoader.exists(texture_path):
+		sprite.texture = load(texture_path)
+		sprite.visible = true
+	else:
+		sprite.texture = null
+		sprite.visible = false
+	sprite.scale = Vector2(1.0, 1.0)

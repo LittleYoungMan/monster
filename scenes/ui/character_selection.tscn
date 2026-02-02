@@ -1,6 +1,6 @@
-[gd_scene load_steps=4 format=3 uid="uid://c2thb7d3k5c8p"]
+[gd_scene format=3 uid="uid://b6c6da7hygy0y"]
 
-[ext_resource type="Script" path="res://scripts/ui/character_selection.gd" id="1_7jw2e"]
+[ext_resource type="Script" uid="uid://cnghpx3etu2qs" path="res://scripts/ui/character_selection.gd" id="1_7jw2e"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_1"]
 bg_color = Color(0.12, 0.12, 0.13, 1)
@@ -11,11 +11,11 @@ border_width_bottom = 2
 border_color = Color(0.22, 0.22, 0.24, 1)
 corner_radius_top_left = 6
 corner_radius_top_right = 6
-corner_radius_bottom_left = 6
 corner_radius_bottom_right = 6
+corner_radius_bottom_left = 6
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_2"]
-bg_color = Color(0.10, 0.10, 0.11, 1)
+bg_color = Color(0.1, 0.1, 0.11, 1)
 border_width_left = 2
 border_width_top = 2
 border_width_right = 2
@@ -23,33 +23,29 @@ border_width_bottom = 2
 border_color = Color(0.22, 0.22, 0.24, 1)
 corner_radius_top_left = 6
 corner_radius_top_right = 6
-corner_radius_bottom_left = 6
 corner_radius_bottom_right = 6
+corner_radius_bottom_left = 6
 
-[node name="CharacterSelection" type="Control"]
+[node name="CharacterSelection" type="Control" unique_id=1021591333]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 0.0
-offset_top = 0.0
-offset_right = 0.0
-offset_bottom = 0.0
+grow_horizontal = 2
+grow_vertical = 2
 script = ExtResource("1_7jw2e")
 
-[node name="Background" type="ColorRect" parent="."]
-layout_mode = 3
+[node name="Background" type="ColorRect" parent="." unique_id=35640072]
+layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 0.0
-offset_top = 0.0
-offset_right = 0.0
-offset_bottom = 0.0
+grow_horizontal = 2
+grow_vertical = 2
 color = Color(0.08, 0.08, 0.09, 1)
 
-[node name="Root" type="MarginContainer" parent="."]
-layout_mode = 3
+[node name="Root" type="MarginContainer" parent="." unique_id=1106780856]
+layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
@@ -57,98 +53,113 @@ offset_left = 40.0
 offset_top = 30.0
 offset_right = -40.0
 offset_bottom = -30.0
+grow_horizontal = 2
+grow_vertical = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
-[node name="MainVBox" type="VBoxContainer" parent="Root"]
-layout_mode = 3
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
+[node name="MainVBox" type="VBoxContainer" parent="Root" unique_id=1921930573]
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
-theme_override_constants/separation = 24
+theme_override_constants/separation = 12
 
-[node name="HeaderLabel" type="Label" parent="Root/MainVBox"]
+[node name="HeaderLabel" type="Label" parent="Root/MainVBox" unique_id=1545353094]
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
 text = "选择角色"
-theme_override_font_sizes/font_size = 36
 horizontal_alignment = 1
 
-[node name="TopPanel" type="Panel" parent="Root/MainVBox"]
-custom_minimum_size = Vector2(0, 300)
+[node name="MainContent" type="HBoxContainer" parent="Root/MainVBox" unique_id=1973348378]
+layout_mode = 2
 size_flags_horizontal = 3
-size_flags_vertical = 0
-theme_override_styles/panel = SubResource("StyleBoxFlat_1")
+size_flags_vertical = 3
+theme_override_constants/separation = 12
 
-[node name="TopHBox" type="HBoxContainer" parent="Root/MainVBox/TopPanel"]
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = 20.0
-offset_top = 20.0
-offset_right = -20.0
-offset_bottom = -20.0
-theme_override_constants/separation = 24
-
-[node name="BigIcon" type="TextureRect" parent="Root/MainVBox/TopPanel/TopHBox"]
-custom_minimum_size = Vector2(220, 220)
-stretch_mode = 5
-
-[node name="InfoVBox" type="VBoxContainer" parent="Root/MainVBox/TopPanel/TopHBox"]
-size_flags_horizontal = 3
+[node name="LeftPanel" type="VBoxContainer" parent="Root/MainVBox/MainContent" unique_id=882904555]
+custom_minimum_size = Vector2(420, 0)
+layout_mode = 2
 size_flags_vertical = 3
 theme_override_constants/separation = 10
 
-[node name="NameLabel" type="Label" parent="Root/MainVBox/TopPanel/TopHBox/InfoVBox"]
-text = "角色名称"
-theme_override_font_sizes/font_size = 34
+[node name="BigIcon" type="TextureRect" parent="Root/MainVBox/MainContent/LeftPanel" unique_id=475870650]
+custom_minimum_size = Vector2(400, 400)
+layout_mode = 2
+stretch_mode = 5
 
-[node name="SpecLabel" type="Label" parent="Root/MainVBox/TopPanel/TopHBox/InfoVBox"]
+[node name="StatsPanel" type="Panel" parent="Root/MainVBox/MainContent/LeftPanel" unique_id=1787720398]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_styles/panel = SubResource("StyleBoxFlat_1")
+
+[node name="StatsScroll" type="ScrollContainer" parent="Root/MainVBox/MainContent/LeftPanel/StatsPanel" unique_id=1014523501]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 14.0
+offset_top = 14.0
+offset_right = -14.0
+offset_bottom = -14.0
+
+[node name="StatsVBox" type="VBoxContainer" parent="Root/MainVBox/MainContent/LeftPanel/StatsPanel/StatsScroll" unique_id=283188192]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 8
+
+[node name="NameLabel" type="Label" parent="Root/MainVBox/MainContent/LeftPanel/StatsPanel/StatsScroll/StatsVBox" unique_id=288626454]
+layout_mode = 2
+theme_override_font_sizes/font_size = 26
+text = "角色名称"
+
+[node name="SpecLabel" type="Label" parent="Root/MainVBox/MainContent/LeftPanel/StatsPanel/StatsScroll/StatsVBox" unique_id=1640118041]
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
 text = "角色特性描述"
 autowrap_mode = 3
 
-[node name="StatsGrid" type="GridContainer" parent="Root/MainVBox/TopPanel/TopHBox/InfoVBox"]
+[node name="StatsGrid" type="GridContainer" parent="Root/MainVBox/MainContent/LeftPanel/StatsPanel/StatsScroll/StatsVBox" unique_id=725661671]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/h_separation = 10
+theme_override_constants/v_separation = 4
 columns = 2
-theme_override_constants/h_separation = 18
-theme_override_constants/v_separation = 6
 
-[node name="BottomPanel" type="Panel" parent="Root/MainVBox"]
-custom_minimum_size = Vector2(0, 480)
+[node name="ButtonHBox" type="HBoxContainer" parent="Root/MainVBox/MainContent/LeftPanel" unique_id=157182651]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="StartButton" type="Button" parent="Root/MainVBox/MainContent/LeftPanel/ButtonHBox" unique_id=280604496]
+custom_minimum_size = Vector2(0, 46)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "开始游戏"
+
+[node name="QuitButton" type="Button" parent="Root/MainVBox/MainContent/LeftPanel/ButtonHBox" unique_id=1642006992]
+custom_minimum_size = Vector2(140, 46)
+layout_mode = 2
+text = "退出游戏"
+
+[node name="RightPanel" type="Panel" parent="Root/MainVBox/MainContent" unique_id=1764443033]
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_styles/panel = SubResource("StyleBoxFlat_2")
 
-[node name="BottomHBox" type="HBoxContainer" parent="Root/MainVBox/BottomPanel"]
-anchors_preset = 15
+[node name="ScrollContainer" type="ScrollContainer" parent="Root/MainVBox/MainContent/RightPanel" unique_id=698469979]
+layout_mode = 0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 20.0
-offset_top = 20.0
-offset_right = -20.0
-offset_bottom = -20.0
-theme_override_constants/separation = 24
+offset_left = 14.0
+offset_top = 14.0
+offset_right = -14.0
+offset_bottom = -14.0
 
-[node name="ScrollContainer" type="ScrollContainer" parent="Root/MainVBox/BottomPanel/BottomHBox"]
-custom_minimum_size = Vector2(0, 0)
+[node name="CharacterGrid" type="GridContainer" parent="Root/MainVBox/MainContent/RightPanel/ScrollContainer" unique_id=2108658577]
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
-
-[node name="CharacterGrid" type="GridContainer" parent="Root/MainVBox/BottomPanel/BottomHBox/ScrollContainer"]
-columns = 10
-size_flags_horizontal = 3
-size_flags_vertical = 3
-theme_override_constants/h_separation = 12
-theme_override_constants/v_separation = 12
-
-[node name="RightPanel" type="VBoxContainer" parent="Root/MainVBox/BottomPanel/BottomHBox"]
-custom_minimum_size = Vector2(260, 0)
-size_flags_vertical = 3
-theme_override_constants/separation = 12
-
-[node name="StartButton" type="Button" parent="Root/MainVBox/BottomPanel/BottomHBox/RightPanel"]
-text = "开始游戏"
-custom_minimum_size = Vector2(200, 60)
-
-[node name="QuitButton" type="Button" parent="Root/MainVBox/BottomPanel/BottomHBox/RightPanel"]
-text = "退出游戏"
-custom_minimum_size = Vector2(200, 50)
+theme_override_constants/h_separation = 10
+theme_override_constants/v_separation = 10
+columns = 6

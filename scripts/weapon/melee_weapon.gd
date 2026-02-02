@@ -54,6 +54,12 @@ var player: CharacterBody2D = null
 ## 使用位置：initialize(), update_cooldown()
 var current_cooldown: float = 1.0
 
+## 是否使用手动冷却（避免Timer与移动状态不同步）
+const USE_MANUAL_COOLDOWN: bool = true
+
+## 手动冷却计时器
+var cooldown_left: float = 0.0
+
 ## 攻击计数
 ## 单位：次
 ## 作用：支持部分UniqueMechanic（例如每3次强化）
@@ -62,6 +68,32 @@ var attack_count: int = 0
 
 ## 攻击动作描述（来自weapon.csv的actackWay）
 var attack_way: String = ""
+
+## 武器原始位置（用于动画复位）
+var weapon_rest_position: Vector2 = Vector2.ZERO
+
+## 是否正在攻击动画中
+var is_attacking: bool = false
+
+##############################################################################
+# 爆炸特效参数
+##############################################################################
+
+## 爆炸VFX路径
+## 作用：近战爆炸用的简约环形
+const EXPLOSION_VFX_PATH: String = "res://assets/PIC/wuqi/VFX/256/vfx_mask_shockwave_ring.png"
+
+## 爆炸VFX基础缩放
+## 单位：倍数
+## 调整范围：0.1-0.5
+## 当前值：0.2
+const EXPLOSION_VFX_SCALE: float = 0.2
+
+## 爆炸VFX时长
+## 单位：秒
+## 调整范围：0.1-0.4
+## 当前值：0.2
+const EXPLOSION_VFX_DURATION: float = 0.2
 
 ##############################################################################
 # 节点引用
@@ -83,10 +115,18 @@ var attack_way: String = ""
 # 运行时更新
 ##############################################################################
 
-func _process(delta: float) -> void:
-	## 让攻击范围始终以玩家为中心，严格按attack_range生效
+func _physics_process(delta: float) -> void:
+	## 让攻击范围始终以玩家为中心
 	if player and attack_area:
 		attack_area.global_position = player.global_position
+
+	## 武器位置由Player固定，不跟随玩家移动
+	## 只在攻击时播放旋转动画
+	if USE_MANUAL_COOLDOWN:
+		cooldown_left -= delta
+		if cooldown_left <= 0.0:
+			_perform_attack()
+			cooldown_left = current_cooldown
 
 ##############################################################################
 # 初始化
@@ -126,12 +166,15 @@ func initialize(template: Dictionary, instance: Dictionary, owner_player: Charac
 	attack_area.collision_layer = CollisionLayers.get_layer_mask(CollisionLayers.PLAYER_PROJECTILE)
 	attack_area.collision_mask = CollisionLayers.get_layer_mask(CollisionLayers.ENEMY)
 	attack_area.add_to_group("weapon_attack")
+	attack_area.top_level = true  # 避免父节点移动导致攻击区域偏移
 	attack_area.monitoring = true
 	attack_area.monitorable = true
 
 	# 5) 启动计时器
-	attack_timer.wait_time = current_cooldown
-	attack_timer.start()
+	cooldown_left = current_cooldown
+	if not USE_MANUAL_COOLDOWN:
+		attack_timer.wait_time = current_cooldown
+		attack_timer.start()
 
 	print("[MeleeWeapon] 初始化完成:")
 	print("  - 名称(name_cn)=", weapon_template.get("name_cn", "未知"))
@@ -161,6 +204,7 @@ func _load_sprite() -> void:
 		sprite.texture = texture
 		sprite.scale = Vector2(0.25, 0.25)  # 256 -> 64
 		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		_apply_handle_pivot(texture, sprite.scale)
 		print("[MeleeWeapon] 图标加载成功: ", sprite_path)
 	else:
 		print("[MeleeWeapon] 图标不存在: ", sprite_path, "，生成占位图")
@@ -180,7 +224,44 @@ func _generate_placeholder_sprite() -> void:
 	var texture: ImageTexture = ImageTexture.create_from_image(img)
 	sprite.texture = texture
 	sprite.scale = Vector2(1.0, 1.0)
-	print("[MeleeWeapon] 占位图生成: RGB(", r, ",", g, ",", b, ")")
+	_apply_handle_pivot(texture, sprite.scale)
+
+## 将武器握把作为旋转中心
+##
+## 参数：
+##   texture - 纹理
+##   scale_value - 当前缩放
+func _apply_handle_pivot(texture: Texture2D, scale_value: Vector2) -> void:
+	if not sprite or not texture:
+		return
+	sprite.centered = false
+	var size: Vector2 = texture.get_size() * scale_value
+	var left_offset: float = _get_opaque_left_offset(texture) * scale_value.x
+	# 让武器从玩家向外延伸（握把靠近玩家）
+	sprite.position = Vector2(-left_offset, -size.y * 0.5)
+
+## 获取贴图非透明像素的最左边界
+##
+## 参数：
+##   texture - 纹理
+## 返回：
+##   左边界像素坐标（0表示无偏移）
+func _get_opaque_left_offset(texture: Texture2D) -> float:
+	var img: Image = texture.get_image()
+	if img == null:
+		return 0.0
+	var w: int = img.get_width()
+	var h: int = img.get_height()
+	var min_x: int = w
+	for y in range(h):
+		for x in range(w):
+			var color: Color = img.get_pixel(x, y)
+			if color.a > 0.01:
+				if x < min_x:
+					min_x = x
+	if min_x == w:
+		return 0.0
+	return float(min_x)
 
 ##############################################################################
 # 攻击范围
@@ -191,6 +272,7 @@ func _generate_placeholder_sprite() -> void:
 ## 作用：将attack_range写入CircleShape2D半径
 func _setup_attack_range() -> void:
 	var range: float = weapon_template.get("attack_range", 80.0)
+	range = max(25.0, range)
 	if attack_shape and attack_shape.shape is CircleShape2D:
 		attack_shape.shape.radius = range
 		print("[MeleeWeapon] 攻击范围已设置: ", range, "px")
@@ -228,30 +310,32 @@ func _calculate_cooldown() -> void:
 
 ## Timer回调
 func _on_attack_timer_timeout() -> void:
+	if USE_MANUAL_COOLDOWN:
+		return
 	_perform_attack()
 
 ## 执行攻击
 ##
 ## 流程：
 ## 1) 获取AttackArea内的敌人HurtBox
-## 2) 计算伤害并调用enemy.take_damage()
-## 3) 输出调试信息
+## 2) 找到最近敌人作为攻击方向
+## 3) 播放攻击动画（朝向敌人移动武器）
+## 4) 计算伤害并调用enemy.take_damage()
+## 5) 输出调试信息
 func _perform_attack() -> void:
-	_play_attack_animation()
-	var overlapping_areas: Array[Area2D] = attack_area.get_overlapping_areas()
-
-	var enemies: Array[Node2D] = []
-	for area: Area2D in overlapping_areas:
-		if area.is_in_group("enemy_hurtbox"):
-			var enemy: Node2D = area.get_parent()
-			if enemy and enemy.is_in_group("enemy"):
-				enemies.append(enemy)
+	var origin: Vector2 = _get_attack_origin()
+	var attack_range: float = weapon_template.get("attack_range", 80.0)
+	attack_range = max(25.0, attack_range)
+	var enemies: Array[Node2D] = _query_enemies_in_range(origin, attack_range)
 
 	if enemies.is_empty():
 		return
 
 	var arc_deg: float = _get_attack_arc_deg()
 	var base_dir: Vector2 = _get_base_attack_dir(enemies)
+
+	# 播放攻击动画（朝向敌人方向）
+	_play_attack_animation(base_dir)
 
 	attack_count += 1
 	var unique_mechanic: String = weapon_template.get("unique_mechanic", "")
@@ -268,8 +352,9 @@ func _perform_attack() -> void:
 		enemies = enemies.slice(0, 1)
 
 	for enemy: Node2D in enemies:
-		if arc_deg > 0.0 and base_dir != Vector2.ZERO:
-			var enemy_dir: Vector2 = (enemy.global_position - global_position).normalized()
+		# 360°旋转攻击不需要角度检查
+		if arc_deg < 360.0 and base_dir != Vector2.ZERO:
+			var enemy_dir: Vector2 = (enemy.global_position - origin).normalized()
 			var angle_deg: float = rad_to_deg(base_dir.angle_to(enemy_dir))
 			if abs(angle_deg) > arc_deg * 0.5:
 				continue
@@ -376,7 +461,9 @@ func get_display_name_en() -> String:
 ## 冷却变化时刷新
 func update_cooldown() -> void:
 	_calculate_cooldown()
-	attack_timer.wait_time = current_cooldown
+	cooldown_left = current_cooldown
+	if not USE_MANUAL_COOLDOWN:
+		attack_timer.wait_time = current_cooldown
 
 ##############################################################################
 # 攻击模板（依据actackWay/UniqueMechanic）
@@ -384,6 +471,8 @@ func update_cooldown() -> void:
 
 func _get_attack_arc_deg() -> float:
 	var way: String = attack_way
+
+	# 优先匹配具体角度
 	if way.find("30°") != -1:
 		return 30.0
 	if way.find("45°") != -1:
@@ -392,10 +481,16 @@ func _get_attack_arc_deg() -> float:
 		return 60.0
 	if way.find("90°") != -1:
 		return 90.0
+
+	# 匹配攻击类型
 	if way.find("垂直") != -1 or way.find("突刺") != -1:
 		return 20.0
 	if way.find("横扫") != -1:
 		return 90.0
+	if way.find("旋转") != -1:
+		return 360.0  # 旋转攻击全向
+
+	# 从UniqueMechanic中提取
 	var unique_mechanic: String = weapon_template.get("unique_mechanic", "")
 	if unique_mechanic.find("小范围挥击") != -1:
 		return 20.0
@@ -403,24 +498,71 @@ func _get_attack_arc_deg() -> float:
 		return 100.0
 	if unique_mechanic.find("横扫范围更大") != -1:
 		return 100.0
-	return 0.0
+
+	# 默认：如果是近战武器但没有定义actackWay，使用45°作为默认扇形
+	# 远程武器（有ProjectileID）不会使用这个函数
+	return 45.0
 
 func _get_base_attack_dir(enemies: Array[Node2D]) -> Vector2:
 	var nearest: Node2D = null
 	var nearest_dist: float = INF
+	var origin: Vector2 = _get_attack_origin()
 	for enemy: Node2D in enemies:
-		var dist: float = global_position.distance_to(enemy.global_position)
+		var dist: float = origin.distance_to(enemy.global_position)
 		if dist < nearest_dist:
 			nearest_dist = dist
 			nearest = enemy
 	if nearest:
-		return (nearest.global_position - global_position).normalized()
+		return (nearest.global_position - origin).normalized()
 	return Vector2.ZERO
+
+## 获取攻击中心（默认使用玩家位置）
+##
+## 参数：无
+## 返回：
+##   攻击中心位置
+func _get_attack_origin() -> Vector2:
+	return global_position
+
+## 查询范围内敌人（使用物理查询，避免group/Area延迟）
+##
+## 参数：
+##   origin - 中心点
+##   radius - 半径
+## 返回：
+##   敌人节点数组
+func _query_enemies_in_range(origin: Vector2, radius: float) -> Array[Node2D]:
+	var results: Array[Node2D] = []
+	var mines: Array[Node2D] = []
+	var space_state: PhysicsDirectSpaceState2D = get_world_2d().direct_space_state
+	var shape := CircleShape2D.new()
+	shape.radius = radius
+	var params := PhysicsShapeQueryParameters2D.new()
+	params.shape = shape
+	params.transform = Transform2D(0.0, origin)
+	params.collide_with_bodies = true
+	params.collide_with_areas = false
+	params.collision_mask = CollisionLayers.get_layer_mask(CollisionLayers.ENEMY)
+
+	var hits: Array = space_state.intersect_shape(params, 16)
+	for hit in hits:
+		var collider: Object = hit.get("collider")
+		if collider is Node2D:
+			var enemy: Node2D = collider
+			if enemy.is_in_group("enemy"):
+				results.append(enemy)
+			elif enemy.is_in_group("mine"):
+				mines.append(enemy)
+	if not results.is_empty():
+		return results
+	## 无敌人时允许攻击矿点
+	return mines
 
 func _continue_after_hit(enemy: Node2D, damage: float, base_dir: Vector2, unique_mechanic: String) -> void:
 	## 小范围爆炸
 	if "小范围爆炸" in unique_mechanic or "爆炸" in unique_mechanic:
 		_apply_aoe_damage(enemy.global_position, 80.0, damage)
+		_spawn_explosion_vfx(enemy.global_position)
 
 func _apply_aoe_damage(center: Vector2, radius: float, damage: float) -> void:
 	var enemies: Array[Node] = get_tree().get_nodes_in_group("enemy")
@@ -431,36 +573,91 @@ func _apply_aoe_damage(center: Vector2, radius: float, damage: float) -> void:
 				if node.has_method("take_damage"):
 					node.take_damage(damage)
 
+## 爆炸特效（低性能开销）
+func _spawn_explosion_vfx(pos: Vector2) -> void:
+	if not ResourceLoader.exists(EXPLOSION_VFX_PATH):
+		return
+	var vfx_node: Node2D = Node2D.new()
+	var vfx_sprite: Sprite2D = Sprite2D.new()
+	vfx_sprite.texture = load(EXPLOSION_VFX_PATH)
+	vfx_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	vfx_sprite.scale = Vector2(EXPLOSION_VFX_SCALE, EXPLOSION_VFX_SCALE)
+	vfx_node.add_child(vfx_sprite)
+	get_parent().add_child(vfx_node)
+	vfx_node.global_position = pos
+	var tween: Tween = vfx_node.create_tween()
+	tween.tween_property(vfx_sprite, "scale", vfx_sprite.scale * 1.8, EXPLOSION_VFX_DURATION)
+	tween.parallel().tween_property(vfx_sprite, "modulate:a", 0.0, EXPLOSION_VFX_DURATION)
+	tween.tween_callback(vfx_node.queue_free)
+
 ##############################################################################
 # 攻击动作表现
 ##############################################################################
 
-func _play_attack_animation() -> void:
-	var anim_target: Node2D = sprite if sprite else self
-	if not anim_target:
+## 播放攻击动画
+##
+## 参数：
+##   attack_direction - 攻击方向（归一化向量）
+## 作用：
+##   - 武器向外挥砍（移动位置+旋转）
+##   - 动画匹配实际攻击范围
+func _play_attack_animation(attack_direction: Vector2) -> void:
+	if not sprite:
 		return
+
+	is_attacking = true
 
 	var tween: Tween = get_tree().create_tween()
-	tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
-	var base_rotation: float = anim_target.rotation
-	var swing_a: float = -0.4
-	var swing_b: float = 0.4
+	# 获取攻击范围（用于计算挥砍距离）
+	var attack_range: float = weapon_template.get("attack_range", 120.0)
+	var swing_distance: float = attack_range * 0.8  # 挥砍移动距离为攻击范围的80%
 
+	# 记录原始位置和旋转
+	var original_pos: Vector2 = position
+	var original_sprite_rot: float = sprite.rotation
+
+	# 挥砍角度范围（在朝向敌人的基础上的偏移）
+	var swing_angle_offset: float = 0.4
 	if "45" in attack_way:
-		swing_a = -0.8
-		swing_b = 0.8
+		swing_angle_offset = 0.6
 	elif "垂直" in attack_way:
-		swing_a = -0.5
-		swing_b = 0.5
+		swing_angle_offset = 0.5
 	elif "横" in attack_way:
-		swing_a = -0.2
-		swing_b = 0.2
-	elif "旋转" in attack_way:
-		tween.tween_property(anim_target, "rotation", base_rotation + TAU, 0.12)
-		tween.tween_property(anim_target, "rotation", base_rotation, 0.06)
+		swing_angle_offset = 0.2
+
+	# 旋转攻击模式
+	if "旋转" in attack_way:
+		# 旋转360度攻击
+		tween.parallel().tween_property(sprite, "rotation", sprite.rotation + TAU, 0.20)
+		tween.tween_callback(func(): is_attacking = false)
 		return
 
-	anim_target.rotation = base_rotation + swing_a
-	tween.tween_property(anim_target, "rotation", base_rotation + swing_b, 0.08)
-	tween.tween_property(anim_target, "rotation", base_rotation, 0.06)
+	# 挥砍动画（更慢更流畅）
+	var anim_duration: float = 0.18
+	var return_duration: float = 0.10
+
+	# 第二步：朝向敌人方向挥砍（包含前后摆动）
+	# 向后蓄力
+	var swing_back_angle: float = -swing_angle_offset
+	var swing_forward_angle: float = swing_angle_offset
+
+	# 同时执行旋转和位移
+	tween.parallel().tween_property(sprite, "rotation", swing_forward_angle, anim_duration)
+	tween.parallel().tween_property(self, "position", original_pos + attack_direction * swing_distance, anim_duration)
+
+	# 第三步：复位
+	tween.tween_property(sprite, "rotation", original_sprite_rot, return_duration)
+	tween.parallel().tween_property(self, "position", original_pos, return_duration)
+
+	# 动画完成后重置状态
+	tween.tween_callback(func(): is_attacking = false)
+
+## 获取攻击状态
+##
+## 参数：无
+## 返回：
+##   true/false
+func get_is_attacking() -> bool:
+	return is_attacking

@@ -28,8 +28,26 @@ func _ready() -> void:
 	else:
 		current_language = "zh"
 
+	# 加载翻译资源
+	_load_translations()
+
 	TranslationServer.set_locale(current_language)
 	print("[Localization] 初始化完成，当前语言=", current_language)
+
+##############################################################################
+# 内部函数
+##############################################################################
+
+func _load_translations() -> void:
+	var zh_trans: Translation = load("res://assets/data/localization.zh.translation")
+	if zh_trans:
+		TranslationServer.add_translation(zh_trans)
+		print("[Localization] 已加载中文翻译")
+
+	var en_trans: Translation = load("res://assets/data/localization.en.translation")
+	if en_trans:
+		TranslationServer.add_translation(en_trans)
+		print("[Localization] 已加载英文翻译")
 
 ##############################################################################
 # 对外接口

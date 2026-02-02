@@ -87,10 +87,8 @@ func _get_boss_damage_mult() -> float:
 func die() -> void:
 	var gold_drop: int = _get_boss_gold()
 	var ore_drop: int = _get_boss_ore()
-
-	GameManager.add_gold(gold_drop)
-	GameManager.add_ore(ore_drop)
-	GameManager.add_exp(50)
+	_spawn_pickup("gold_exp", gold_drop, 50, 0)
+	_spawn_pickup("ore", 0, 0, ore_drop)
 
 	if SpawnerConfig.BOSS_PAUSE_TIMER and GameManager.has_method("resume_timer"):
 		GameManager.resume_timer()
@@ -100,6 +98,24 @@ func die() -> void:
 	
 	print("[Boss] 被击杀: ", boss_minute, "分钟 - 金币=", gold_drop, " 矿石=", ore_drop)
 	queue_free()
+
+## 生成拾取物（金币/经验/矿石）
+func _spawn_pickup(pickup_type: String, gold: int, exp_amount: int, ore_amount: int) -> void:
+	var pickup_scene: PackedScene = load("res://scenes/world/pickup.tscn")
+	if not pickup_scene:
+		return
+	var pickup: Area2D = pickup_scene.instantiate()
+	var offset: Vector2 = Vector2(randf_range(-16.0, 16.0), randf_range(-16.0, 16.0))
+	pickup.global_position = global_position + offset
+	var config: Dictionary = {
+		"type": pickup_type,
+		"gold": gold,
+		"exp": exp_amount,
+		"ore": ore_amount
+	}
+	if pickup.has_method("initialize"):
+		pickup.initialize(config)
+	get_parent().add_child(pickup)
 
 ##############################################################################
 # Boss奖励表

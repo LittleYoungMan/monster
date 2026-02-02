@@ -33,6 +33,8 @@ extends CanvasLayer
 ## 顶部时间显示标签（若场景内有计时器，可由外部更新）
 @onready var time_label: Label = $TopBar/TimeLabel
 
+## 商店倒计时显示（临时添加在时间标签后面）
+
 ## 顶部金币显示标签，文本格式为“金币: 数量”
 @onready var gold_label: Label = $TopBar/GoldLabel
 
@@ -61,6 +63,7 @@ var player: CharacterBody2D = null
 ##############################################################################
 
 func _ready() -> void:
+	## 绑定玩家与信号
 	## 等待一帧，确保玩家节点已加入场景树
 	await get_tree().process_frame
 
@@ -73,7 +76,16 @@ func _ready() -> void:
 	GameManager.gold_changed.connect(_on_gold_changed)
 	GameManager.ore_changed.connect(_on_ore_changed)
 
+	## 连接时间变化信号
+	GameManager.time_changed.connect(_on_time_changed)
+
+	## 初始化显示
+	_on_gold_changed(GameManager.gold)
+	_on_ore_changed(GameManager.ore)
+	_update_time_display()
+
 func _process(delta: float) -> void:
+	## 刷新血量/等级与时间显示
 	## 每帧刷新玩家生命与等级显示
 	## 说明：不在HUD侧进行数值计算，直接读取玩家最新值
 	if player:
@@ -81,14 +93,43 @@ func _process(delta: float) -> void:
 		health_bar.value = player.current_hp
 		level_label.text = "Lv." + str(player.current_level)
 
+	## 每帧刷新时间显示
+	_update_time_display()
+
 ##############################################################################
 # 信号回调：货币变更
 ##############################################################################
 
 func _on_gold_changed(amount: int) -> void:
+	## 金币变更回调
 	## 外部逻辑通知金币变更，此处仅更新文本
 	gold_label.text = "金币: " + str(amount)
 
 func _on_ore_changed(amount: int) -> void:
+	## 矿石变更回调
 	## 外部逻辑通知矿石变更，此处仅更新文本
 	ore_label.text = "矿石: " + str(amount)
+
+##############################################################################
+# 时间显示
+##############################################################################
+
+func _on_time_changed(seconds: float) -> void:
+	## 时间变更回调
+	_update_time_display()
+
+func _update_time_display() -> void:
+	## 刷新时间与商店倒计时显示
+	## 从GameManager获取当前时间并格式化为 MM:SS
+	var total_seconds: int = int(GameManager.current_time)
+	var remaining_seconds: int = int(GameManager.GAME_DURATION - total_seconds)
+
+	if remaining_seconds < 0:
+		remaining_seconds = 0
+
+	var minutes: int = remaining_seconds / 60
+	var seconds: int = remaining_seconds % 60
+
+	## 显示时间和商店倒计时
+	var shop_countdown: int = int(GameManager.shop_timer)
+	time_label.text = "%02d:%02d | 商店:%ds" % [minutes, seconds, shop_countdown]

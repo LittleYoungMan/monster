@@ -1,0 +1,82 @@
+[gd_scene format=3 uid="uid://b6qj6n1o3s1y8"]
+
+[ext_resource type="Script" path="res://scripts/shop/shop_item_card.gd" id="1_0p4r1"]
+
+[node name="ShopItemCard" type="Panel"]
+custom_minimum_size = Vector2(330, 320)
+size_flags_vertical = 3
+script = ExtResource("1_0p4r1")
+
+[node name="VBox" type="VBoxContainer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 12.0
+offset_top = 12.0
+offset_right = -12.0
+offset_bottom = -12.0
+theme_override_constants/separation = 8
+
+[node name="TopRow" type="HBoxContainer" parent="VBox"]
+theme_override_constants/separation = 8
+
+[node name="Icon" type="TextureRect" parent="VBox/TopRow"]
+custom_minimum_size = Vector2(84, 84)
+expand_mode = 4
+stretch_mode = 5
+texture_filter = 1
+
+[node name="TopText" type="VBoxContainer" parent="VBox/TopRow"]
+theme_override_constants/separation = 4
+
+[node name="NameLabel" type="Label" parent="VBox/TopRow/TopText"]
+text = "Item"
+theme_override_font_sizes/font_size = 20
+
+[node name="RarityLabel" type="Label" parent="VBox/TopRow/TopText"]
+text = "Rarity"
+theme_override_font_sizes/font_size = 16
+
+[node name="EffectScroll" type="ScrollContainer" parent="VBox"]
+custom_minimum_size = Vector2(0, 150)
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 2
+
+[node name="EffectVBox" type="VBoxContainer" parent="VBox/EffectScroll"]
+anchor_right = 1.0
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="EffectLabel" type="Label" parent="VBox/EffectScroll/EffectVBox"]
+text = "Effects"
+autowrap_mode = 0
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 14
+
+[node name="Spacer" type="Control" parent="VBox"]
+size_flags_vertical = 3
+
+[node name="BottomRow" type="HBoxContainer" parent="VBox"]
+theme_override_constants/separation = 8
+
+[node name="PriceLabel" type="Label" parent="VBox/BottomRow"]
+text = "Price: 0"
+theme_override_font_sizes/font_size = 18
+
+[node name="BuyButton" type="Button" parent="VBox/BottomRow"]
+text = "Buy"
+custom_minimum_size = Vector2(140, 40)
+
+[node name="SoldLabel" type="Label" parent="."]
+text = "Sold"
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 0.0
+offset_top = 0.0
+offset_right = 0.0
+offset_bottom = 0.0
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_font_sizes/font_size = 24
+visible = false

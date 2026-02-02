@@ -41,6 +41,9 @@ var shop_door_scene: PackedScene = null
 ## 工坊门场景（需要创建）
 var forge_door_scene: PackedScene = null
 
+## 矿点场景
+var ore_mine_scene: PackedScene = null
+
 ## 结算界面（需要创建）
 var game_over_ui_scene: PackedScene = null
 
@@ -81,6 +84,20 @@ var player: CharacterBody2D = null
 ## 地图根节点
 @onready var map_root: Node2D = $MapRoot
 
+## 地图边界（世界坐标）
+var map_bounds: Rect2 = Rect2()
+
+##############################################################################
+# 矿点生成参数
+##############################################################################
+
+## 矿点距地图边缘的内缩距离
+## 单位：像素
+## 作用：避免矿点贴边不可见
+## 调整范围：100-400
+## 当前值：220
+const ORE_MINE_MARGIN: float = 220.0
+
 ##############################################################################
 # 生命周期
 ##############################################################################
@@ -91,17 +108,18 @@ func _ready() -> void:
 
 	## 生成大地图
 	_build_map()
+
+	## 生成矿点
+	_spawn_ore_mines()
 	
 	## 初始化玩家
 	_initialize_player()
 	
 	## 连接GameManager信号
 	_connect_signals()
-	
+
 	## 启动游戏计时器
 	GameManager.start_game()
-	
-	print("[Main] 场景初始化完成")
 
 ##############################################################################
 # 玩家初始化
@@ -120,11 +138,9 @@ func _initialize_player() -> void:
 	
 	## 加载角色数据
 	player.load_character_data(character_id)
-	
+
 	## 设置到GameManager（用于升级回调）
 	GameManager.set_player(player)
-	
-	print("[Main] 玩家初始化: ", character_id)
 
 ##############################################################################
 # 信号连接
@@ -132,18 +148,13 @@ func _initialize_player() -> void:
 
 func _connect_signals() -> void:
 	## 商店门触发
-	if GameManager.has_signal("shop_door_triggered"):
-		GameManager.shop_door_triggered.connect(_on_shop_door_triggered)
-	
+	GameManager.shop_door_triggered.connect(_on_shop_door_triggered)
+
 	## 工坊门可用
-	if GameManager.has_signal("forge_available"):
-		GameManager.forge_available.connect(_on_forge_available)
-	
+	GameManager.forge_available.connect(_on_forge_available)
+
 	## 游戏结束
-	if GameManager.has_signal("game_over"):
-		GameManager.game_over.connect(_on_game_over)
-	
-	print("[Main] 信号连接完成")
+	GameManager.game_over.connect(_on_game_over)
 
 ##############################################################################
 # 商店门生成
@@ -151,20 +162,17 @@ func _connect_signals() -> void:
 
 func _on_shop_door_triggered() -> void:
 	if not shop_door_scene or not player:
-		push_warning("[Main] 商店门场景缺失或玩家不存在")
 		return
-	
+
 	## 实例化商店门
 	var shop_door: Area2D = shop_door_scene.instantiate()
-	
+
 	## 计算生成位置（玩家附近）
 	var spawn_pos: Vector2 = _calculate_shop_door_position()
 	shop_door.global_position = spawn_pos
-	
+
 	## 添加到场景
 	add_child(shop_door)
-	
-	print("[Main] 商店门生成: ", spawn_pos)
 
 ## 计算商店门位置
 func _calculate_shop_door_position() -> Vector2:
@@ -261,25 +269,21 @@ func _load_optional_scenes() -> void:
 	var shop_door_path: String = "res://scenes/shop/shop_door.tscn"
 	if ResourceLoader.exists(shop_door_path):
 		shop_door_scene = load(shop_door_path)
-		print("[Main] 商店门场景加载成功")
-	else:
-		push_warning("[Main] 商店门场景不存在: ", shop_door_path)
-	
+
 	## 工坊门场景
 	var forge_door_path: String = "res://scenes/shop/forge_door.tscn"
 	if ResourceLoader.exists(forge_door_path):
 		forge_door_scene = load(forge_door_path)
-		print("[Main] 工坊门场景加载成功")
-	else:
-		push_warning("[Main] 工坊门场景不存在: ", forge_door_path)
-	
+
+	## 矿点场景
+	var ore_mine_path: String = "res://scenes/world/ore_mine.tscn"
+	if ResourceLoader.exists(ore_mine_path):
+		ore_mine_scene = load(ore_mine_path)
+
 	## 结算界面场景
 	var game_over_path: String = "res://scenes/run/game_over_ui.tscn"
 	if ResourceLoader.exists(game_over_path):
 		game_over_ui_scene = load(game_over_path)
-		print("[Main] 结算界面加载成功")
-	else:
-		push_warning("[Main] 结算界面不存在: ", game_over_path)
 
 ##############################################################################
 # 大地图拼接
@@ -312,6 +316,8 @@ func _build_map() -> void:
 
 	## 让地图中心对齐场景原点
 	map_root.position = Vector2(-total_width * 0.5, -total_height * 0.5)
+	map_bounds = Rect2(map_root.position, Vector2(total_width, total_height))
+	GameManager.map_bounds = map_bounds
 
 	var index: int = 0
 	for row in range(MAP_ROWS):
@@ -335,6 +341,70 @@ func _build_map() -> void:
 			map_root.add_child(sprite)
 
 			index += 1
+
+##############################################################################
+# 矿点系统
+##############################################################################
+
+func _spawn_ore_mines() -> void:
+	## 在地图四周放置矿点
+	if not ore_mine_scene or map_bounds.size == Vector2.ZERO:
+		return
+	var margin: float = ORE_MINE_MARGIN
+	var left: float = map_bounds.position.x + margin
+	var right: float = map_bounds.position.x + map_bounds.size.x - margin
+	var top: float = map_bounds.position.y + margin
+	var bottom: float = map_bounds.position.y + map_bounds.size.y - margin
+
+	var mine_configs: Array[Dictionary] = [
+		{
+			"mine_id": "N_NW",
+			"respawn_time": 80.0,
+			"drop_min": 2,
+			"drop_max": 4,
+			"stage_bonus_s2": 1,
+			"stage_bonus_s3": 2,
+			"stage_bonus_s4": 3,
+			"pos": Vector2(left, top)
+		},
+		{
+			"mine_id": "N_NE",
+			"respawn_time": 95.0,
+			"drop_min": 2,
+			"drop_max": 5,
+			"stage_bonus_s2": 1,
+			"stage_bonus_s3": 2,
+			"stage_bonus_s4": 3,
+			"pos": Vector2(right, top)
+		},
+		{
+			"mine_id": "N_SW",
+			"respawn_time": 110.0,
+			"drop_min": 3,
+			"drop_max": 5,
+			"stage_bonus_s2": 1,
+			"stage_bonus_s3": 2,
+			"stage_bonus_s4": 4,
+			"pos": Vector2(left, bottom)
+		},
+		{
+			"mine_id": "N_SE",
+			"respawn_time": 120.0,
+			"drop_min": 3,
+			"drop_max": 6,
+			"stage_bonus_s2": 1,
+			"stage_bonus_s3": 3,
+			"stage_bonus_s4": 4,
+			"pos": Vector2(right, bottom)
+		}
+	]
+
+	for cfg: Dictionary in mine_configs:
+		var mine: StaticBody2D = ore_mine_scene.instantiate()
+		mine.global_position = cfg.get("pos", Vector2.ZERO)
+		if mine.has_method("initialize"):
+			mine.initialize(cfg)
+		map_root.add_child(mine)
 
 ##############################################################################
 # 调试接口
