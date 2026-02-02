@@ -1,89 +1,78 @@
-##############################################################################
-# Player - 玩家角色
+﻿##############################################################################
+# Player - 玩家角色主脚本
 #
-# 设计目的：
-# - 读取角色CSV（role.csv）并计算基础属性
-# - 叠加装备/商店/Spec加成
-# - 管理武器槽与实例化武器
-# - 处理受伤/治疗/升级
-# - 提供UI显示数据
+# 职责概述：
+# - 从 role.csv 读取角色配置，生成基础属性与 Spec 特性
+# - 管理武器的装备/卸载、环绕位置与朝向
+# - 处理受击、死亡、回血、升级等生命周期事件
+# - 向 UI 提供角色状态和展示数据
+# - 驱动基础动画（呼吸/步态）
 #
-# CSV字段对齐（role.csv）：
-# - id/name_cn/name_en/initial_weapon -> character_data
-# - 基础属性字段（MeleeDamage/Armor/Health等）-> base_stats
-# - Spec -> 角色特性解析（parse_character_spec）
-#
-# 调用链：
-# - GameManager.level_up -> _on_level_up
-# - Weapon/Enemy -> take_damage/heal
+# 主要数据源/信号：
+# - GameData.get_character / calculate_character_stats / parse_character_spec
+# - GameManager.level_up 信号 -> _on_level_up
+# - Weapon / Enemy 调用 take_damage / heal
 ##############################################################################
 extends CharacterBody2D
 
-## 角色ID（role.csv中的id）
+## 角色ID（role.csv 的 id，用于加载贴图与初始武器）
 @export var character_id: String = "hero_01"
 
 
 ##############################################################################
-# 角色数据（运行期）
+# 运行时角色数据
 ##############################################################################
 
-## 原始角色数据（GameData.get_character）
+## 原始角色配置（GameData.get_character）
 var character_data: Dictionary = {}
-
 ## 当前等级
 var current_level: int = 1
-
-## 基础属性（由GameData.calculate_character_stats计算）
+## 基础属性（GameData.calculate_character_stats 计算）
 var base_stats: Dictionary = {}
-
-## 装备加成（来自武器词条/装备系统）
+## 装备加成（来自武器/装备系统）
 var equipment_bonus: Dictionary = {}
-
 ## 商店加成（来自商店购买/升级）
 var shop_bonus: Dictionary = {}
-
-## Spec倍率（角色特性解析结果）
+## Spec 加成倍率（解析 Spec 文本后得到）
 var spec_multipliers: Dictionary = {}
-
-## 当前生命
+## 当前生命值
 var current_hp: float = 0.0
-
-## 当前经验（本脚本存储一份，GameManager也会维护）
-var current_exp: float = 0.0
+## 当前经验值（本地存储，GameManager 也持有一份）—未使用，如需经验体系再启用
+# var current_exp: float = 0.0
 
 ##############################################################################
 # 武器系统
 ##############################################################################
 
-## 武器槽列表（每个元素是Dictionary）
+## 武器槽列表（每槽存放武器数据字典，空槽为 {}）
 var weapon_slots: Array[Dictionary] = []
 
-## 最大武器槽数量
+## 最大武器槽数量；策划改上限时仅需调整该常量
 const MAX_WEAPON_SLOTS: int = 6
 
-## 武器场景缓存（melee/ranged/element/summon）
+## 预加载的武器场景缓存（melee/ranged/element/summon），避免战斗中反复加载
 var weapon_scenes: Dictionary = {}
 
-## 武器环绕显示半径（像素）
+## 武器环绕半径（像素），控制武器围绕玩家的距离
 @export var weapon_orbit_radius: float = 110.0
 
-## 武器环绕起始角度（弧度）
-var weapon_orbit_base_angle: float = 0.0
+## 武器环绕初始角度（弧度）—当前未使用，如需起始朝向可恢复
+# var weapon_orbit_base_angle: float = 0.0
 
-## 武器环绕朝向平滑速度
-const WEAPON_ORBIT_AIM_SMOOTH: float = 6.0
+## 武器环绕朝向平滑系数—当前未使用，如需插值瞄准可恢复
+# const WEAPON_ORBIT_AIM_SMOOTH: float = 6.0
 
-## 武器环绕目标角度
-var weapon_orbit_target_angle: float = 0.0
+## 武器环绕目标角度（弧度）—当前未使用
+# var weapon_orbit_target_angle: float = 0.0
 
-## 环绕中心偏移（运行时自动算贴图偏差后存放在这里）
+## 环绕中心偏移（基于碰撞体中心与全局坐标差值，抵消父级缩放/位移）
 var weapon_orbit_center_offset: Vector2 = Vector2.ZERO
 
-## 首帧调试打印标记
+## 环绕调试打印标记（仅打印一次防止刷屏）
 var weapon_orbit_debug_printed: bool = false
 
 func _refresh_weapon_orbit_center_offset() -> void:
-	# 以物理碰撞体中心为基准，避免父节点缩放/贴图位移放大误差
+	# 以碰撞体中心为基准计算环绕中心，抵消父节点缩放/位移造成的偏移
 	var shape_node: CollisionShape2D = get_node_or_null("CollisionShape2D")
 	if shape_node and is_instance_valid(shape_node):
 		weapon_orbit_center_offset = shape_node.global_position - global_position
@@ -93,85 +82,75 @@ func _refresh_weapon_orbit_center_offset() -> void:
 # 节点引用
 ##############################################################################
 
+## 角色主精灵节点（贴图与呼吸/步态动画作用对象）
 @onready var sprite: Sprite2D = $Sprite2D
+## 武器容器（所有武器槽都挂在这里，便于整体旋转/偏移）
 @onready var weapon_container: Node2D = $WeaponContainer
+## 武器环绕枢轴（当前与容器同一节点；后续若需独立旋转可替换为单独 Pivot）
 @onready var orbit_pivot: Node2D = $WeaponContainer
+## 受击区域（检测敌人/子弹命中）
 @onready var hurt_box: Area2D = $HurtBox
+## 跟随摄像机
 @onready var camera: Camera2D = $Camera2D
 
 ##############################################################################
-# 呼吸动画
+# 呼吸/步态动画参数
 ##############################################################################
 
-## 呼吸计时
+## 呼吸计时（正弦相位累积，用于呼吸/步态波形）
 var breathe_time: float = 0.0
 
-## 呼吸/步态节奏（静止）
-## 单位：Hz
-## 作用：静止时的微弱起伏节奏
-## 调整范围：0.8-1.6
-## 当前值：1.1
+## 静止呼吸频率（Hz），站立时的轻微起伏；范围建议 0.8-1.6
 const BREATHE_IDLE_SPEED: float = 1.1
 
-## 呼吸/步态节奏（移动）
-## 单位：Hz
-## 作用：移动时的步态起伏节奏
-## 调整范围：2.0-4.0
-## 当前值：3.2
+## 移动步态频率（Hz），行走时的起伏节奏；范围建议 1.0-4.0
 const BREATHE_MOVE_SPEED: float = 3.2
 
-## 静止呼吸上移幅度
-## 单位：像素
-## 作用：静止时轻微上移
-## 调整范围：0.3-1.0
-## 当前值：0.6
+## 静止呼吸的上下偏移幅度（像素）
 const BREATHE_IDLE_OFFSET: float = 0.6
 
-## 移动步态上下抖动幅度
-## 单位：像素
-## 作用：移动时的轻微步态起伏（不缩放）
-## 调整范围：0.6-2.0
-## 当前值：1.4
+## 移动步态的上下摆幅（像素）
 const MOVE_BOB_OFFSET: float = 1.4
 
-## 步态波形锐化
-## 单位：倍率
-## 作用：让移动时的起伏更像“脚步”
-## 调整范围：1.0-2.0
-## 当前值：1.4
+## 移动步态波形锐度（0=正弦，2=方波），影响脚步的“跳跃感”
 const MOVE_BOB_SHARPNESS: float = 1.4
 
-## 记录初始尺度与位置
+## 精灵初始缩放（用于动画结束还原）
 var base_sprite_scale: Vector2 = Vector2.ONE
+## 精灵初始局部位置
 var base_sprite_position: Vector2 = Vector2.ZERO
+## 呼吸动画是否已完成初始化
 var breathe_initialized: bool = false
 
 ##############################################################################
 # 初始化
 ##############################################################################
 
+## 节点就绪：初始化武器槽/预加载场景/绑定信号
 func _ready() -> void:
-	## 初始化武器槽
+	## 初始化武器槽列表，预留空字典便于直接下标赋值
 	weapon_slots.clear()
 	weapon_slots.resize(MAX_WEAPON_SLOTS)
 	for i: int in range(MAX_WEAPON_SLOTS):
 		weapon_slots[i] = {}
 
+	## 预加载武器场景，避免战斗中动态加载卡顿
 	_preload_weapon_scenes()
 	if weapon_container:
+		# 重置容器变换，确保武器环绕以玩家中心为基准
 		weapon_container.position = Vector2.ZERO
 		weapon_container.rotation = 0.0
 		weapon_container.scale = Vector2.ONE
 		orbit_pivot = weapon_container
 
-	# 自动补偿贴图与物理中心偏移，确保武器圆心对齐可见中心
+	# 自动校准精灵与碰撞体中心差值，避免环绕偏移
 	_refresh_weapon_orbit_center_offset()
 
-	## 受击事件
+	## 受击事件监听：投射物/敌人体积触碰
 	hurt_box.area_entered.connect(_on_hurt_box_area_entered)
 	hurt_box.body_entered.connect(_on_hurt_box_body_entered)
 
-	## 碰撞层设置
+	## 碰撞层/掩码配置：玩家自身 layer，mask 仅包含敌人/子弹/拾取/墙/门
 	collision_layer = CollisionLayers.PLAYER
 	collision_mask = CollisionLayers.combine_layers([
 		CollisionLayers.ENEMY,
@@ -188,14 +167,14 @@ func _ready() -> void:
 		GameManager.level_up.connect(_on_level_up)
 
 func _process(delta: float) -> void:
-	## 呼吸动画单独更新，避免依赖物理帧
+	## 每帧更新呼吸/步态动画，独立于物理帧
 	_update_breathe(delta)
 
 ##############################################################################
 # 角色数据加载
 ##############################################################################
 
-## 加载角色数据（role.csv）
+## 从 role.csv 读取角色配置，计算基础属性并装备初始武器
 func load_character_data(char_id: String) -> void:
 	character_id = char_id
 	character_data = GameData.get_character(char_id)
@@ -209,11 +188,11 @@ func load_character_data(char_id: String) -> void:
 	load_character_sprite()
 	equip_initial_weapon()
 
-## 计算基础属性
+## 计算角色基础属性（不含装备/商店/Spec 加成）
 func calculate_base_stats(level: int) -> void:
 	base_stats = GameData.calculate_character_stats(character_id, level)
 
-## 解析角色Spec文本
+## 解析角色 Spec 文本，填充 spec_multipliers 字典
 func parse_character_spec() -> void:
 	var spec_text: String = character_data.get("Spec", "")
 	if spec_text.is_empty():
@@ -231,22 +210,22 @@ func parse_character_spec() -> void:
 		if stat_name.is_empty():
 			var raw: String = spec_item.get("raw", "")
 			if not raw.is_empty():
-				print("[Player] 未识别Spec: ", raw)
+				print("[Player] 未识别的 Spec 条目: ", raw)
 			var special: String = spec_item.get("special", "")
 			if not special.is_empty():
-				print("[Player] Spec特殊: ", special)
+				print("[Player] Spec 特殊处理: ", special)
 			continue
 
 		if operation == "multiply":
 			spec_multipliers[stat_name] = multiplier
-			print("[Player] Spec倍率: ", stat_name, " x", multiplier)
+			print("[Player] Spec 倍率: ", stat_name, " x", multiplier)
 		elif operation == "set_zero":
 			spec_multipliers[stat_name] = 0.0
-			print("[Player] Spec清零: ", stat_name)
+			print("[Player] Spec 置零: ", stat_name)
 		elif operation == "special":
-			print("[Player] Spec特殊处理: ", stat_name, " - ", spec_item.get("special", ""))
+			print("[Player] Spec 特殊处理: ", stat_name, " - ", spec_item.get("special", ""))
 
-## 加载角色图
+## 加载角色贴图（若缺失则生成占位图），并初始化呼吸动画基准
 func load_character_sprite() -> void:
 	var sprite_path: String = "res://assets/PIC/role/256/" + character_id + ".png"
 	if ResourceLoader.exists(sprite_path):
@@ -255,15 +234,15 @@ func load_character_sprite() -> void:
 		sprite.scale = Vector2(0.5, 0.5)
 		var offset_x: float = character_data.get("sprite_offset_x", 0.0)
 		var offset_y: float = character_data.get("sprite_offset_y", 0.0)
-		## 统一脚底对齐，避免留白导致腿被裁
+		## 统一脚底对齐，避免透明边导致脚下漂移
 		_apply_character_sprite_layout(texture, Vector2(offset_x, offset_y))
 		_refresh_weapon_orbit_center_offset()
-		print("[Player] 角色图加载: ", sprite_path)
+		print("[Player] 角色贴图加载: ", sprite_path)
 	else:
 		_generate_placeholder_sprite()
 	_init_breathe_base()
 
-## 角色占位图
+## 生成角色占位图（缺贴图时确保可见），同时刷新环绕中心
 func _generate_placeholder_sprite() -> void:
 	var img: Image = Image.create(128, 128, false, Image.FORMAT_RGBA8)
 	var hash_value: int = character_id.hash()
@@ -278,33 +257,33 @@ func _generate_placeholder_sprite() -> void:
 	print("[Player] 使用角色占位图")
 	_init_breathe_base()
 
-## 旧版脚底偏移计算（保留备用）
-func _apply_feet_offset(texture: Texture2D, base_offset: Vector2) -> Vector2:
-	var img: Image = texture.get_image()
-	if img == null:
-		return base_offset
-	var w: int = img.get_width()
-	var h: int = img.get_height()
-	var bottom: int = -1
-	for y in range(h - 1, -1, -1):
-		for x in range(w):
-			var color: Color = img.get_pixel(x, y)
-			if color.a > 0.01:
-				bottom = y
-				break
-		if bottom != -1:
-			break
-	if bottom == -1:
-		return base_offset
-	var desired_bottom: float = h * 0.5
-	var auto_offset_y: float = desired_bottom - float(bottom)
-	return Vector2(base_offset.x, base_offset.y + auto_offset_y)
+# 贴图脚底偏移计算（当前未使用，预留兜底函数）
+# func _apply_feet_offset(texture: Texture2D, base_offset: Vector2) -> Vector2:
+# 	var img: Image = texture.get_image()
+# 	if img == null:
+# 		return base_offset
+# 	var w: int = img.get_width()
+# 	var h: int = img.get_height()
+# 	var bottom: int = -1
+# 	for y in range(h - 1, -1, -1):
+# 		for x in range(w):
+# 			var color: Color = img.get_pixel(x, y)
+# 			if color.a > 0.01:
+# 				bottom = y
+# 				break
+# 		if bottom != -1:
+# 			break
+# 	if bottom == -1:
+# 		return base_offset
+# 	var desired_bottom: float = h * 0.5
+# 	var auto_offset_y: float = desired_bottom - float(bottom)
+# 	return Vector2(base_offset.x, base_offset.y + auto_offset_y)
 
-## 应用角色贴图布局（强制脚底对齐）
+## 应用角色贴图布局（裁剪透明边，脚底贴地）
 ##
-## 参数：
+## 参数:
 ##   texture - 角色贴图
-##   base_offset - 表内偏移（sprite_offset_x/y）
+##   base_offset - 配置的贴图偏移（sprite_offset_x/y）
 func _apply_character_sprite_layout(texture: Texture2D, base_offset: Vector2) -> void:
 	if not sprite or not texture:
 		return
@@ -340,7 +319,7 @@ func _apply_character_sprite_layout(texture: Texture2D, base_offset: Vector2) ->
 	var max_y_px: float = float(max_y) * scale_value.y
 	sprite.position = Vector2(-min_x_px, -max_y_px) + base_offset
 
-## 记录呼吸动画基准
+## 记录呼吸/步态动画的初始基准
 func _init_breathe_base() -> void:
 	if not sprite:
 		return
@@ -348,32 +327,32 @@ func _init_breathe_base() -> void:
 	base_sprite_position = sprite.position
 	breathe_initialized = true
 
-## 更新呼吸动画
+## 按速度比例驱动呼吸/步态动画
 func _update_breathe(delta: float) -> void:
 	if not breathe_initialized or not sprite:
 		return
-	## 移动强度（0=静止，1=全速）
+	## 速度比例：0=静止，1=满速
 	var move_speed: float = max(get_actual_move_speed(), 1.0)
 	var speed_ratio: float = clamp(velocity.length() / move_speed, 0.0, 1.0)
 
-	## 统一节奏（移动更快，静止更慢）
+	## 插值动画频率：移动越快，频率越高
 	var speed: float = lerp(BREATHE_IDLE_SPEED, BREATHE_MOVE_SPEED, speed_ratio)
 	breathe_time += delta * speed
 
 	if speed_ratio > 0.05:
-		## 移动：只做步态起伏，不做缩放
+		## 移动：用锐化正弦模拟步伐起伏（不做缩放）
 		var step_wave: float = abs(sin(breathe_time))
 		var step_centered: float = (step_wave - 0.5) * 2.0
 		var step_sharp: float = sign(step_centered) * pow(abs(step_centered), MOVE_BOB_SHARPNESS)
 		sprite.scale = base_sprite_scale
 		sprite.position = base_sprite_position + Vector2(0.0, step_sharp * MOVE_BOB_OFFSET)
 	else:
-		## 静止：极弱上下呼吸
+		## 静止：轻微正弦呼吸
 		var wave: float = sin(breathe_time)
 		sprite.scale = base_sprite_scale
 		sprite.position = base_sprite_position + Vector2(0.0, wave * BREATHE_IDLE_OFFSET)
 
-## 初始武器装备（role.csv的initial_weapon）
+## 装备初始武器（role.csv 的 initial_weapon）
 func equip_initial_weapon() -> void:
 	var weapon_id: String = character_data.get("initial_weapon", "")
 	if weapon_id.is_empty():
@@ -396,7 +375,7 @@ func equip_initial_weapon() -> void:
 # 属性获取
 ##############################################################################
 
-## 获取最终属性（基础+装备+商店+Spec倍率）
+## 获取最终属性值（基础+装备+商店+Spec 倍率）
 func get_final_stat(stat_name: String) -> float:
 	var base_value: float = base_stats.get(stat_name, 0.0)
 	var equip_value: float = equipment_bonus.get(stat_name, 0.0)
@@ -406,7 +385,7 @@ func get_final_stat(stat_name: String) -> float:
 		total *= spec_multipliers[stat_name]
 	return total
 
-## 获取实际移速（基础移速 * 曲线倍率）
+## 获取实际移动速度（基础 MoveSpeed 经 GameData 曲线转换）
 func get_actual_move_speed() -> float:
 	var move_speed_stat: float = get_final_stat("MoveSpeed")
 	var mult: float = GameData.calculate_move_speed_mult(move_speed_stat)
@@ -421,6 +400,7 @@ func get_armor_dr() -> float:
 # 武器管理
 ##############################################################################
 
+## 向空槽添加武器：实例化场景、分配槽位、初始化武器数据
 func add_weapon(weapon_data: Dictionary) -> bool:
 	var empty_slot: int = _find_empty_weapon_slot()
 	if empty_slot == -1:
@@ -438,7 +418,7 @@ func add_weapon(weapon_data: Dictionary) -> bool:
 		push_error("[Player] 未找到武器场景: " + weapon_class)
 		return false
 
-	# 创建槽位节点，包裹武器，统一环绕位置，避免各武器原点不同导致偏移
+	# 创建武器槽节点并挂载武器实例，确保环绕位置以玩家为基准
 	var slot: Node2D = Node2D.new()
 	slot.name = "WeaponSlot" + str(empty_slot)
 	slot.position = Vector2.ZERO
@@ -456,14 +436,14 @@ func add_weapon(weapon_data: Dictionary) -> bool:
 	else:
 		weapon_container.add_child(slot)
 
-	# 计算武器围绕玩家的角度位置（类似土豆兄弟）
+	# 计算武器环绕角度：面向最近敌人并均分圆周
 	# 统计当前已装备的武器数量
 	var current_weapon_count: int = 0
 	for i in range(MAX_WEAPON_SLOTS):
 		if not weapon_slots[i].is_empty():
 			current_weapon_count += 1
 
-	# 初始角度对齐最近敌人方向，若无敌人则朝上(0度)
+	# 初始角度对准最近敌人；无敌人则保持 0 弧度
 	var base_angle: float = 0.0
 	var nearest_enemy: Node2D = _find_nearest_in_group("enemy", global_position)
 	if nearest_enemy:
@@ -488,16 +468,16 @@ func add_weapon(weapon_data: Dictionary) -> bool:
 
 	recalculate_equipment_bonus()
 
-	print("[Player] 装备武器: ", weapon_template.get("name_cn", weapon_data["weapon_id"]), " 槽位=", empty_slot, " 角度=", rad_to_deg(weapon_angle))
+	print("[Player] 装备武器: ", weapon_template.get("name_cn", weapon_data["weapon_id"]), " 槽=", empty_slot, " 角度=", rad_to_deg(weapon_angle))
 	return true
 
 func remove_weapon(slot_index: int) -> void:
 	if slot_index < 0 or slot_index >= MAX_WEAPON_SLOTS:
-		push_error("[Player] 槽位越界: " + str(slot_index))
+		push_error("[Player] 武器槽越界: " + str(slot_index))
 		return
 
 	if weapon_slots[slot_index].is_empty():
-		push_warning("[Player] 槽位为空: " + str(slot_index))
+		push_warning("[Player] 武器槽为空: " + str(slot_index))
 		return
 
 	var weapon_data: Dictionary = weapon_slots[slot_index]
@@ -506,7 +486,7 @@ func remove_weapon(slot_index: int) -> void:
 		if is_instance_valid(weapon_node):
 			if weapon_node.has_method("cleanup_all_summons"):
 				weapon_node.cleanup_all_summons()
-	# 优先移除槽位节点（包含武器本体）
+	# 优先移除槽节点（包含武器实例）
 	if weapon_data.has("slot_node"):
 		var slot_node: Node = weapon_data["slot_node"]
 		if is_instance_valid(slot_node):
@@ -518,9 +498,9 @@ func remove_weapon(slot_index: int) -> void:
 
 	weapon_slots[slot_index] = {}
 	recalculate_equipment_bonus()
-	print("[Player] 卸下武器: 槽位=", slot_index)
+	print("[Player] 卸下武器: 槽=", slot_index)
 
-## 重新计算装备加成
+## 重新计算装备加成（遍历所有武器附加属性）
 func recalculate_equipment_bonus() -> void:
 	equipment_bonus.clear()
 	for weapon_data: Dictionary in weapon_slots:
@@ -535,7 +515,7 @@ func recalculate_equipment_bonus() -> void:
 			if attr_type not in equipment_bonus:
 				equipment_bonus[attr_type] = 0.0
 			equipment_bonus[attr_type] += attr_value
-	print("[Player] 装备加成已重算")
+	print("[Player] 装备加成已刷新")
 
 ##############################################################################
 # 商店加成
@@ -549,7 +529,7 @@ func add_shop_bonus(attribute: String, value: float) -> void:
 
 	update_all_weapons()
 	if attribute.begins_with("Enemy"):
-		# TODO: 通知EnemySpawner刷新参数
+		# TODO: 通知 EnemySpawner 重新计算生成参数
 		pass
 
 func get_shop_bonus_value(attribute: String) -> float:
@@ -559,7 +539,7 @@ func has_shop_bonus(attribute: String) -> bool:
 	return attribute in shop_bonus and shop_bonus[attribute] > 0.0
 
 ##############################################################################
-# 移动与战斗
+# 移动与物理
 ##############################################################################
 
 func _physics_process(delta: float) -> void:
@@ -570,12 +550,13 @@ func _physics_process(delta: float) -> void:
 		input_dir = input_dir.normalized()
 	var speed: float = get_actual_move_speed()
 	velocity = input_dir * speed
+	# Godot 物理移动并处理碰撞
 	move_and_slide()
 	## 限制玩家在地图边界内
 	_clamp_to_map_bounds()
 	_update_weapon_positions()
 
-## 限制玩家在地图范围内
+## 限制玩家全局坐标在地图范围内
 func _clamp_to_map_bounds() -> void:
 	var bounds: Rect2 = GameManager.map_bounds
 	if bounds.size == Vector2.ZERO:
@@ -611,25 +592,25 @@ func take_damage(damage: float) -> void:
 	if current_hp <= 0.0:
 		die()
 
-## 玩家治疗
+## 玩家回血
 func heal(amount: float) -> void:
 	var max_hp: float = get_final_stat("Health")
 	current_hp += amount
 	current_hp = min(current_hp, max_hp)
-	print("[Player] 治疗: ", amount, " 当前HP=", current_hp, "/", max_hp)
+	print("[Player] 回复: ", amount, " 当前HP=", current_hp, "/", max_hp)
 
 ## 玩家死亡
 func die() -> void:
 	print("[Player] 玩家死亡")
 	set_physics_process(false)
 
-## 被敌人投射物命中（TODO：读取投射物伤害）
+## 被敌方投射物命中（TODO: 读取子弹伤害）
 func _on_hurt_box_area_entered(area: Area2D) -> void:
 	if area.is_in_group("enemy_projectile"):
 		# TODO: 读取投射物伤害
 		pass
 
-## 与敌人碰撞（TODO：读取敌人伤害）
+## 与敌人本体碰撞（TODO: 读取敌人伤害）
 func _on_hurt_box_body_entered(body: Node2D) -> void:
 	if body.is_in_group("enemy"):
 		# TODO: 读取敌人伤害
@@ -752,12 +733,12 @@ func update_all_weapons() -> void:
 			weapon_node.update_cooldown()
 	_update_weapon_positions()
 
-## 让武器围绕玩家显示（类似土豆兄弟）
+## 刷新武器环绕位置与朝向（自动居中、瞄准最近敌人）
 func _update_weapon_positions() -> void:
 	if orbit_pivot == null:
 		return
 
-	# 同步容器位置/朝向，但去除父级缩放，避免非等比缩放拉扯环绕半径
+	# 同步容器位置/朝向，但移除父级缩放，避免比例影响环绕半径
 	orbit_pivot.global_transform = Transform2D(global_rotation, global_position)
 
 	var slot_nodes: Array[Node2D] = []
@@ -772,7 +753,7 @@ func _update_weapon_positions() -> void:
 	if slot_nodes.is_empty():
 		return
 
-	# 以角色可见区域中心为圆心（sprite 的可见矩形中心），转换到容器本地坐标
+	# 以精灵可视区域中心为环绕中心，转换到容器本地坐标
 	var orbit_center_local: Vector2 = Vector2.ZERO
 	if sprite and is_instance_valid(sprite) and sprite.texture:
 		var rect: Rect2 = sprite.get_rect() # Sprite2D 本地可见矩形
@@ -780,7 +761,7 @@ func _update_weapon_positions() -> void:
 		var center_world: Vector2 = sprite.to_global(center_local_in_sprite)
 		orbit_center_local = orbit_pivot.to_local(center_world)
 
-	# 首帧调试输出（运行时仅一次）
+	# 首帧调试输出（仅一次，避免刷屏）
 	if not Engine.is_editor_hint() and not weapon_orbit_debug_printed:
 		var slot_pos: Vector2 = slot_nodes[0].global_position if slot_nodes.size() > 0 else Vector2.ZERO
 		var weapon_pos: Vector2 = weapon_nodes[0].global_position if weapon_nodes.size() > 0 else Vector2.ZERO
@@ -792,7 +773,7 @@ func _update_weapon_positions() -> void:
 		print_rich("[orbit_debug] player=", global_position, " orbit_center_local=", orbit_center_local, " sprite=", sprite_pos, " collision=", coll_pos, " slot0=", slot_pos, " weapon0=", weapon_pos, " radius=", weapon_orbit_radius, " count=", slot_nodes.size())
 		weapon_orbit_debug_printed = true
 
-	# 以最近敌人方向为基角；无敌人则为0
+	# 以最近敌人方向为基准；无敌人则角度为 0
 	var base_angle: float = 0.0
 	var nearest_enemy: Node2D = _find_nearest_in_group("enemy", global_position)
 	if nearest_enemy:
@@ -807,7 +788,7 @@ func _update_weapon_positions() -> void:
 			sin(angle) * weapon_orbit_radius
 		)
 
-		# 直接在本地坐标放置，父级缩放不会放大偏移
+		# 直接使用本地坐标放置，父级缩放不会放大偏移
 		slot_nodes[i].position = orbit_center_local + offset
 		slot_nodes[i].rotation = 0.0
 		slot_nodes[i].scale = Vector2.ONE
@@ -824,12 +805,11 @@ func _update_weapon_positions() -> void:
 			else:
 				weapon_nodes[i].rotation = angle
 
-## 查找最近敌人方向
-##
-## 参数：
-##   from_pos - 起点位置
-## 返回：
-##   最近敌人的单位方向向量（无则Vector2.ZERO）
+## 寻找最近敌人方向
+## 参数:
+##   from_pos - 基准位置
+## 返回:
+##   最近敌人的单位方向（若无则 Vector2.ZERO）
 func _get_nearest_enemy_dir(from_pos: Vector2) -> Vector2:
 	var nearest: Node2D = _find_nearest_in_group("enemy", from_pos)
 	if not nearest:
@@ -850,19 +830,16 @@ func _find_nearest_in_group(group_name: String, from_pos: Vector2) -> Node2D:
 				nearest = node
 	return nearest
 
-## 更新武器环绕目标角度（朝向最近敌人）
-##
-## 返回：
-##   是否存在敌人
-func _update_weapon_orbit_target() -> bool:
-	var nearest: Node2D = _find_nearest_in_group("enemy", global_position)
-	if not nearest:
-		nearest = _find_nearest_in_group("mine", global_position)
-	if nearest:
-		var dir: Vector2 = (nearest.global_position - global_position).normalized()
-		weapon_orbit_target_angle = dir.angle()
-		return true
-	return false
+# 预留：更新武器环绕目标角度（最近敌人或矿）。当前未被调用，如需朝向插值可启用。
+# func _update_weapon_orbit_target() -> bool:
+# 	var nearest: Node2D = _find_nearest_in_group("enemy", global_position)
+# 	if not nearest:
+# 		nearest = _find_nearest_in_group("mine", global_position)
+# 	if nearest:
+# 		var dir: Vector2 = (nearest.global_position - global_position).normalized()
+# 		weapon_orbit_target_angle = dir.angle()
+# 		return true
+# 	return false
 
 func get_total_dps() -> float:
 	var total_dps: float = 0.0
