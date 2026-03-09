@@ -26,60 +26,60 @@ extends Node
 ## 工坊刷新
 ## 单位：矿石
 ## 作用：刷新工坊的基础费用与递增
-const FORGE_REFRESH_BASE: int = 10
-const FORGE_REFRESH_STEP: int = 5
+const FORGE_REFRESH_BASE: int = 6
+const FORGE_REFRESH_STEP: int = 4
 const FORGE_REFRESH_MAX_PER_VISIT: int = 3
 
 ## 升阶矿石费用
 ## 单位：矿石
 ## 作用：白->蓝->紫->金
 const UPGRADE_COSTS: Dictionary = {
-	"white": 35,   # white→blue
-	"blue": 90,    # blue→purple
-	"purple": 240  # purple→gold
+	"white": 10,   # white→blue
+	"blue": 30,    # blue→purple
+	"purple": 100  # purple→gold
 }
 
 ## 打孔/开槽费用
 ## 单位：矿石
 ## 作用：紫色第3槽，金色第1-4槽
-const PUNCH_SLOT_COST_PURPLE: int = 55
-const PUNCH_SLOT_COST_GOLD: Array[int] = [35, 55, 80, 110]
+const PUNCH_SLOT_COST_PURPLE: int = 20
+const PUNCH_SLOT_COST_GOLD: Array[int] = [20, 35, 50, 70]
 
 ## 敲数值费用
 ## 单位：矿石
 ## 作用：不换词条，只改数值
 const REROLL_VALUE_COSTS: Dictionary = {
-	"blue": 10,
-	"purple": 16,
-	"gold": 24
+	"blue": 4,
+	"purple": 6,
+	"gold": 9
 }
-const REROLL_VALUE_STEP: int = 6
+const REROLL_VALUE_STEP: int = 4
 const REROLL_VALUE_MAX_PER_SLOT: int = 3
 
 ## 洗词条费用
 ## 单位：矿石
 ## 作用：更换词条类型
 const REROLL_AFFIX_COSTS: Dictionary = {
-	"blue": 18,
-	"purple": 28,
-	"gold": 42
+	"blue": 6,
+	"purple": 10,
+	"gold": 15
 }
-const REROLL_AFFIX_STEP: int = 8
+const REROLL_AFFIX_STEP: int = 5
 
 ## 重铸费用
 ## 单位：矿石
 ## 作用：全洗未锁槽
 const REFORGE_ALL_COSTS: Dictionary = {
-	"blue": 30,
-	"purple": 55,
-	"gold": 90
+	"blue": 12,
+	"purple": 20,
+	"gold": 32
 }
 const REFORGE_ALL_MAX_PER_VISIT: int = 1
 
 ## 锁定费用
 ## 单位：矿石
 ## 作用：锁定词条槽位
-const LOCK_COST: int = 20
+const LOCK_COST: int = 10
 const LOCK_MAX: int = 2
 
 ## 每个Boss限制的升阶次数
@@ -104,16 +104,28 @@ const QUALITY_ATTRIBUTE_SLOTS: Dictionary = {
 ## 单位：数值
 ## 作用：驱动工坊价格递增
 const CRAFT_VALUE_BASE: Dictionary = {
-	"white": 10,
-	"blue": 20,
-	"purple": 40,
-	"gold": 80
+	"white": 4,
+	"blue": 8,
+	"purple": 16,
+	"gold": 24
 }
 
 ## 打造价值倍率
 ## 作用：升阶 x2，其它操作 x1.5
-const CRAFT_VALUE_MULT_UPGRADE: float = 2.0
-const CRAFT_VALUE_MULT_OTHER: float = 1.5
+const CRAFT_VALUE_MULT_UPGRADE: float = 1.6
+const CRAFT_VALUE_MULT_OTHER: float = 1.25
+
+## 分段工坊成本曲线：10分钟前偏平滑，10-15抬高，15分钟后留补短板窗口
+const FORGE_STAGE_COST_MULT: Dictionary = {
+	0: 0.96,
+	5: 1.02,
+	10: 1.12,
+	15: 0.82
+}
+
+## 15分钟后额外+1次工坊刷新，用于修补残缺构筑
+const FORGE_REFRESH_BONUS_STAGE_MINUTE: int = 15
+const FORGE_REFRESH_BONUS_COUNT: int = 1
 
 ##############################################################################
 # 运行期状态
@@ -132,7 +144,7 @@ var is_forge_available: bool = false
 var forge_available_timer: float = 0.0
 
 ## 工坊可用时长（秒）
-const FORGE_AVAILABLE_DURATION: float = 30.0
+const FORGE_AVAILABLE_DURATION: float = 40.0
 
 ## 本次进工坊的刷新次数
 var refresh_count_this_visit: int = 0
@@ -266,7 +278,39 @@ func _apply_craft_value_multiplier(weapon_data: Dictionary, mult: float) -> void
 ## 计算动作最终价格
 func _get_action_cost(weapon_data: Dictionary, base_cost: int) -> int:
 	var craft_value: int = _get_craft_value(weapon_data)
-	return base_cost + int(round(float(craft_value) / 10.0))
+	var raw_cost: int = base_cost + int(round(float(craft_value) / 10.0))
+	raw_cost = _apply_forge_stage_cost(raw_cost)
+	return _apply_material_cost_rate(raw_cost)
+
+## 应用材料成本倍率（MaterialCostRate）
+func _apply_material_cost_rate(cost: int) -> int:
+	var mult: float = 1.0
+	if GameManager and GameManager.has_method("get_player_stat_multiplier"):
+		mult = float(GameManager.get_player_stat_multiplier("MaterialCostRate", 0.2, 3.0))
+	return max(1, int(round(float(cost) * mult)))
+
+func _apply_forge_stage_cost(cost: int) -> int:
+	return max(1, int(round(float(cost) * _get_forge_stage_cost_mult())))
+
+func _get_forge_stage_cost_mult() -> float:
+	var minute: int = 0
+	if GameManager:
+		minute = int(GameManager.current_time / 60.0)
+	if minute >= 15:
+		return float(FORGE_STAGE_COST_MULT[15])
+	if minute >= 10:
+		return float(FORGE_STAGE_COST_MULT[10])
+	if minute >= 5:
+		return float(FORGE_STAGE_COST_MULT[5])
+	return float(FORGE_STAGE_COST_MULT[0])
+
+func _get_refresh_limit() -> int:
+	var minute: int = 0
+	if GameManager:
+		minute = int(GameManager.current_time / 60.0)
+	if minute >= FORGE_REFRESH_BONUS_STAGE_MINUTE:
+		return FORGE_REFRESH_MAX_PER_VISIT + FORGE_REFRESH_BONUS_COUNT
+	return FORGE_REFRESH_MAX_PER_VISIT
 
 ## 获取武器唯一ID（用于计数）
 func _get_weapon_uid(weapon_data: Dictionary) -> int:
@@ -300,7 +344,7 @@ func upgrade_weapon(weapon_data: Dictionary) -> bool:
 	## 检查矿石
 	var base_cost: int = UPGRADE_COSTS.get(current_quality, 999)
 	var cost: int = _get_action_cost(weapon_data, base_cost)
-	if not GameManager.spend_ore(cost):
+	if not GameManager.spend_ore(cost, "forge_upgrade"):
 		push_warning("[ForgeManager] 矿石不足")
 		return false
 	
@@ -402,9 +446,11 @@ func get_lock_cost(weapon_data: Dictionary) -> int:
 
 ## 获取刷新成本
 func get_refresh_cost() -> int:
-	if refresh_count_this_visit >= FORGE_REFRESH_MAX_PER_VISIT:
+	if refresh_count_this_visit >= _get_refresh_limit():
 		return -1
-	return FORGE_REFRESH_BASE + FORGE_REFRESH_STEP * refresh_count_this_visit
+	var raw_cost: int = FORGE_REFRESH_BASE + FORGE_REFRESH_STEP * refresh_count_this_visit
+	raw_cost = _apply_forge_stage_cost(raw_cost)
+	return _apply_material_cost_rate(raw_cost)
 
 ## 打孔（增加1个词条槽）
 func punch_slot(weapon_data: Dictionary) -> bool:
@@ -421,7 +467,7 @@ func punch_slot(weapon_data: Dictionary) -> bool:
 		return false
 
 	var cost: int = get_punch_slot_cost(weapon_data)
-	if cost < 0 or not GameManager.spend_ore(cost):
+	if cost < 0 or not GameManager.spend_ore(cost, "forge_punch"):
 		push_warning("[ForgeManager] 矿石不足")
 		return false
 
@@ -445,7 +491,7 @@ func reroll_value(weapon_data: Dictionary, attr_index: int) -> bool:
 		return false
 
 	var cost: int = get_reroll_value_cost(weapon_data, attr_index)
-	if cost < 0 or not GameManager.spend_ore(cost):
+	if cost < 0 or not GameManager.spend_ore(cost, "forge_reroll_value"):
 		push_warning("[ForgeManager] 矿石不足")
 		return false
 
@@ -476,7 +522,7 @@ func reroll_affix(weapon_data: Dictionary, attr_index: int) -> bool:
 		return false
 
 	var cost: int = get_reroll_affix_cost(weapon_data)
-	if cost < 0 or not GameManager.spend_ore(cost):
+	if cost < 0 or not GameManager.spend_ore(cost, "forge_reroll_affix"):
 		push_warning("[ForgeManager] 矿石不足")
 		return false
 
@@ -498,7 +544,7 @@ func reforge_all(weapon_data: Dictionary) -> bool:
 	if "attributes" not in weapon_data:
 		return false
 	var cost: int = get_reforge_cost(weapon_data)
-	if cost < 0 or not GameManager.spend_ore(cost):
+	if cost < 0 or not GameManager.spend_ore(cost, "forge_reforge"):
 		push_warning("[ForgeManager] 矿石不足")
 		return false
 	var attributes: Array = weapon_data["attributes"]
@@ -518,10 +564,10 @@ func reforge_all(weapon_data: Dictionary) -> bool:
 func refresh_forge() -> bool:
 	if not is_forge_available:
 		return false
-	if refresh_count_this_visit >= FORGE_REFRESH_MAX_PER_VISIT:
+	if refresh_count_this_visit >= _get_refresh_limit():
 		return false
 	var cost: int = get_refresh_cost()
-	if cost < 0 or not GameManager.spend_ore(cost):
+	if cost < 0 or not GameManager.spend_ore(cost, "forge_refresh"):
 		return false
 	refresh_count_this_visit += 1
 	return true
@@ -558,7 +604,7 @@ func lock_attribute(weapon_data: Dictionary, attr_index: int) -> bool:
 	
 	## 检查矿石
 	var cost: int = _get_action_cost(weapon_data, LOCK_COST)
-	if not GameManager.spend_ore(cost):
+	if not GameManager.spend_ore(cost, "forge_lock"):
 		push_warning("[ForgeManager] 矿石不足")
 		return false
 	
@@ -670,3 +716,14 @@ func debug_open_forge() -> void:
 	forge_available_timer = FORGE_AVAILABLE_DURATION
 	upgrades_this_boss = 0
 	print("[ForgeManager] 调试：强制开启工坊")
+
+## 重置整局工坊状态（新开局调用）
+func reset_run_state() -> void:
+	upgrades_this_boss = 0
+	current_boss_minute = -1
+	is_forge_available = false
+	forge_available_timer = 0.0
+	refresh_count_this_visit = 0
+	reforge_count_this_visit = 0
+	reroll_affix_count_this_visit = 0
+	reroll_value_counts.clear()

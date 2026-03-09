@@ -85,6 +85,14 @@ const SLOW_DURATION: float = 3.0
 ## 当前值：0.7
 const SLOW_MULTIPLIER: float = 0.7
 
+## Boss数据缺失时的怪物ID兜底（按分钟）
+const BOSS_FALLBACK_BY_MINUTE: Dictionary = {
+	5: "M_CRC_01",
+	10: "M_GNR_01",
+	15: "M_BRL_01",
+	20: "M_ELT_01"
+}
+
 ##############################################################################
 # 生命周期回调
 ##############################################################################
@@ -362,81 +370,313 @@ func parse_character_spec(spec_text: String) -> Array:
 	## 关键词映射（中文 -> 内部属性名）
 	var keyword_map: Dictionary = {
 		"近战伤害": "MeleeDamage",
-		"近战": "MeleeDamage",
 		"远程伤害": "RangedDamage",
-		"远程": "RangedDamage",
 		"元素伤害": "ElementalDamage",
-		"元素": "ElementalDamage",
 		"召唤伤害": "SummonDamage",
-		"召唤": "SummonDamage",
-		"护甲": "Armor",
-		"移速": "MoveSpeed",
-		"闪避": "Dodge",
-		"生命": "Health",
 		"生命回复": "HealthRegen",
-		"吸血": "Lifesteal",
-		"全伤害": "AllDamage",
+		"暴击伤害": "CritDamage",
 		"暴击率": "CritRate",
-		"暴击伤害": "CritDamage"
+		"全伤害": "AllDamage",
+		"护甲": "Armor",
+		"闪避": "Dodge",
+		"移速": "MoveSpeed",
+		"生命": "Health",
+		"吸血": "Lifesteal",
+		"近战": "MeleeDamage",
+		"远程": "RangedDamage",
+		"元素": "ElementalDamage",
+		"召唤": "SummonDamage"
 	}
+	## 长关键词优先，避免“生命”先于“生命回复”被命中
+	var keyword_priority: Array[String] = [
+		"近战伤害",
+		"远程伤害",
+		"元素伤害",
+		"召唤伤害",
+		"生命回复",
+		"暴击伤害",
+		"暴击率",
+		"全伤害",
+		"护甲",
+		"闪避",
+		"移速",
+		"生命",
+		"吸血",
+		"近战",
+		"远程",
+		"元素",
+		"召唤"
+	]
 
-	var lines: PackedStringArray = spec_text.split("\n")
+	var normalized_text: String = spec_text.replace("\r", "")
+	normalized_text = normalized_text.replace("，", "、").replace(",", "、")
+	normalized_text = normalized_text.replace("；", "、").replace(";", "、")
+	normalized_text = normalized_text.replace("。", "、").replace("|", "、")
 
+	var lines: PackedStringArray = normalized_text.split("\n")
 	for line: String in lines:
 		var trimmed_line: String = line.strip_edges()
 		if trimmed_line.is_empty():
 			continue
-
-		var spec_item: Dictionary = {}
-		var found_stat: bool = false
-		for keyword: String in keyword_map.keys():
-			if keyword in trimmed_line:
-				spec_item["stat"] = keyword_map[keyword]
-				found_stat = true
-				break
-
-		## 特殊文本规则解析
-		if not found_stat:
-			if ("移速" in trimmed_line and "伤害" in trimmed_line):
-				spec_item["stat"] = "MoveSpeed"
-				spec_item["special"] = "speed_to_damage"
-				spec_item["multiplier"] = 1.0
-				spec_item["operation"] = "special"
-				results.append(spec_item)
-				continue
-			elif "敌人数量" in trimmed_line:
-				spec_item["stat"] = "EnemyCount"
-				spec_item["special"] = "spawn_pressure"
-				if "1.5倍" in trimmed_line:
-					spec_item["multiplier"] = 1.5
-				spec_item["operation"] = "special"
-				results.append(spec_item)
-				continue
-			else:
-				spec_item["raw"] = trimmed_line
-				results.append(spec_item)
-				continue
-
-		## 解析倍率/操作符
-		if "*2" in trimmed_line or "×2" in trimmed_line:
-			spec_item["multiplier"] = 2.0
-			spec_item["operation"] = "multiply"
-		elif "/2" in trimmed_line:
-			spec_item["multiplier"] = 0.5
-			spec_item["operation"] = "multiply"
-		elif "*0" in trimmed_line or "×0" in trimmed_line:
-			spec_item["multiplier"] = 0.0
-			spec_item["operation"] = "set_zero"
-		elif "*1.5" in trimmed_line or "1.5倍" in trimmed_line:
-			spec_item["multiplier"] = 1.5
-			spec_item["operation"] = "multiply"
-		else:
-			spec_item["multiplier"] = 1.0
-			spec_item["operation"] = "none"
-
-		results.append(spec_item)
+		var clauses: PackedStringArray = trimmed_line.split("、", false)
+		for clause: String in clauses:
+			_parse_spec_clause(clause.strip_edges(), keyword_map, keyword_priority, results)
 
 	return results
+
+## 解析单条Spec语句
+func _parse_spec_clause(
+	clause: String,
+	keyword_map: Dictionary,
+	keyword_priority: Array[String],
+	results: Array
+) -> void:
+	if clause.is_empty():
+		return
+
+	var normalized_clause: String = clause.strip_edges()
+	if normalized_clause.begins_with("所有来源"):
+		normalized_clause = normalized_clause.trim_prefix("所有来源").strip_edges()
+	elif normalized_clause.begins_with("所有"):
+		normalized_clause = normalized_clause.trim_prefix("所有").strip_edges()
+	if normalized_clause.is_empty():
+		return
+
+	## 特殊规则：移速转全伤
+	if "移速转全伤害" in normalized_clause:
+		var speed_to_damage_ratio: float = _extract_speed_to_damage_ratio(normalized_clause, 0.5)
+		results.append({
+			"operation": "special",
+			"special": "speed_to_damage",
+			"ratio": speed_to_damage_ratio,
+			"raw": clause
+		})
+		return
+
+	## 特殊规则：闪避触发回血
+	if "闪避" in normalized_clause and ("回复" in normalized_clause or "回血" in normalized_clause or "回生命" in normalized_clause):
+		var numbers: Array[float] = _extract_numbers_from_text(normalized_clause)
+		var chance: float = 10.0
+		var heal_amount: float = 1.0
+		if numbers.size() >= 2:
+			chance = numbers[0]
+			heal_amount = numbers[1]
+		elif numbers.size() == 1:
+			if "%" in normalized_clause:
+				chance = numbers[0]
+			else:
+				heal_amount = numbers[0]
+		chance = clamp(chance, 0.0, 100.0)
+		heal_amount = max(0.0, heal_amount)
+		if heal_amount <= 0.0:
+			heal_amount = 1.0
+		results.append({
+			"operation": "special",
+			"special": "dodge_heal_on_dodge",
+			"chance": chance,
+			"heal": heal_amount,
+			"raw": clause
+		})
+		return
+
+	## 特殊规则：每+1移速换伤害和生命（最低生命保底）
+	if "每+1移速" in normalized_clause and "近战" in normalized_clause and "生命" in normalized_clause:
+		var signed_numbers: Array[float] = _extract_signed_numbers_from_text(normalized_clause)
+		var melee_per_speed: float = 2.0
+		var health_penalty_per_speed: float = 1.0
+		var health_floor: float = _extract_number_after_keyword(normalized_clause, "最低生命", 1.0)
+		for value: float in signed_numbers:
+			if value > 0.0 and absf(value - 1.0) > 0.001:
+				melee_per_speed = absf(value)
+				break
+		for value: float in signed_numbers:
+			if value < 0.0:
+				health_penalty_per_speed = absf(value)
+				break
+		results.append({
+			"operation": "special",
+			"special": "speed_tradeoff",
+			"melee_per_speed": melee_per_speed,
+			"health_penalty_per_speed": health_penalty_per_speed,
+			"health_floor": max(1.0, health_floor),
+			"raw": clause
+		})
+		return
+
+	## 特殊规则：周期随机双姿态
+	var has_stance_cycle: bool = (
+		"随机" in normalized_clause
+		and "近战" in normalized_clause
+		and "远程" in normalized_clause
+		and ("+30" in normalized_clause or "-50" in normalized_clause)
+	)
+	if has_stance_cycle:
+		var interval_sec: float = _extract_interval_seconds(normalized_clause, 3600.0)
+		interval_sec = clamp(interval_sec, 15.0, 600.0)
+		results.append({
+			"operation": "special",
+			"special": "stance_cycle_melee_ranged",
+			"interval_sec": interval_sec,
+			"raw": clause
+		})
+		return
+
+	## 特殊规则：小怪刷新压力
+	if "小怪刷新压力" in normalized_clause or "敌人数量" in normalized_clause:
+		var pressure_mult: float = _extract_multiplier_from_clause(normalized_clause, 1.0)
+		pressure_mult = clamp(pressure_mult, 0.3, 3.0)
+		results.append({
+			"stat": "EnemyCount",
+			"operation": "multiply",
+			"multiplier": pressure_mult,
+			"raw": clause
+		})
+		return
+
+	var matched_stat: String = _find_spec_stat_by_keyword(normalized_clause, keyword_map, keyword_priority)
+	if matched_stat.is_empty():
+		if "buff" in normalized_clause and "清除另一种" in normalized_clause:
+			return
+		results.append({"raw": clause})
+		return
+
+	## 乘除与置零规则
+	var multiplier_value: float = _extract_multiplier_from_clause(normalized_clause, NAN)
+	if not is_nan(multiplier_value):
+		if absf(multiplier_value) < 0.0001:
+			results.append({
+				"stat": matched_stat,
+				"operation": "set_zero",
+				"multiplier": 0.0,
+				"raw": clause
+			})
+			return
+		results.append({
+			"stat": matched_stat,
+			"operation": "multiply",
+			"multiplier": multiplier_value,
+			"raw": clause
+		})
+		return
+
+	## 加减规则（如 近战伤害+30 / 远程-50）
+	var signed_value: Variant = _extract_first_signed_delta(normalized_clause)
+	if typeof(signed_value) == TYPE_FLOAT:
+		results.append({
+			"stat": matched_stat,
+			"operation": "add",
+			"value": float(signed_value),
+			"raw": clause
+		})
+		return
+
+	results.append({
+		"stat": matched_stat,
+		"operation": "none",
+		"multiplier": 1.0,
+		"raw": clause
+	})
+
+## 提取文本中全部数字（支持符号与小数）
+func _extract_numbers_from_text(text: String) -> Array[float]:
+	var regex := RegEx.new()
+	regex.compile("[-+]?\\d+(?:\\.\\d+)?")
+	var numbers: Array[float] = []
+	var matches: Array[RegExMatch] = regex.search_all(text)
+	for item: RegExMatch in matches:
+		numbers.append(float(item.get_string()))
+	return numbers
+
+## 提取文本中全部“带符号”的数字
+func _extract_signed_numbers_from_text(text: String) -> Array[float]:
+	var regex := RegEx.new()
+	regex.compile("[-+]\\d+(?:\\.\\d+)?")
+	var numbers: Array[float] = []
+	var matches: Array[RegExMatch] = regex.search_all(text)
+	for item: RegExMatch in matches:
+		numbers.append(float(item.get_string()))
+	return numbers
+
+## 从语句中提取乘除倍率（支持 * / x / × / “倍”）
+func _extract_multiplier_from_clause(text: String, fallback: float) -> float:
+	var multiply_regex := RegEx.new()
+	multiply_regex.compile("[xX×*]\\s*([-+]?\\d+(?:\\.\\d+)?)")
+	var multiply_match: RegExMatch = multiply_regex.search(text)
+	if multiply_match != null:
+		return float(multiply_match.get_string(1))
+
+	var divide_regex := RegEx.new()
+	divide_regex.compile("/\\s*([-+]?\\d+(?:\\.\\d+)?)")
+	var divide_match: RegExMatch = divide_regex.search(text)
+	if divide_match != null:
+		var divisor: float = float(divide_match.get_string(1))
+		if absf(divisor) > 0.0001:
+			return 1.0 / divisor
+		return 0.0
+
+	var times_regex := RegEx.new()
+	times_regex.compile("([-+]?\\d+(?:\\.\\d+)?)\\s*倍")
+	var times_match: RegExMatch = times_regex.search(text)
+	if times_match != null:
+		return float(times_match.get_string(1))
+
+	return fallback
+
+## 提取某关键词后的第一个数字
+func _extract_number_after_keyword(text: String, keyword: String, default_value: float) -> float:
+	var escaped_key: String = keyword.replace("(", "\\(").replace(")", "\\)")
+	var regex := RegEx.new()
+	regex.compile(escaped_key + "[^\\d\\-+]*([-+]?\\d+(?:\\.\\d+)?)")
+	var matched: RegExMatch = regex.search(text)
+	if matched == null:
+		return default_value
+	return float(matched.get_string(1))
+
+## 提取“每隔XX秒/min”时长（统一转换到秒）
+func _extract_interval_seconds(text: String, default_seconds: float) -> float:
+	var regex := RegEx.new()
+	regex.compile("每(?:隔)?\\s*([-+]?\\d+(?:\\.\\d+)?)\\s*(秒|s|sec|min|分钟)?")
+	var matched: RegExMatch = regex.search(text)
+	if matched == null:
+		return default_seconds
+	var value: float = float(matched.get_string(1))
+	var unit: String = matched.get_string(2).to_lower()
+	if unit == "min" or unit == "分钟":
+		return value * 60.0
+	return value
+
+## 提取“移速转全伤害”规则中的换算比例
+func _extract_speed_to_damage_ratio(text: String, default_ratio: float) -> float:
+	var numbers: Array[float] = _extract_numbers_from_text(text)
+	if numbers.is_empty():
+		return default_ratio
+	if "每+1" in text or "每1" in text:
+		if numbers.size() >= 2:
+			var speed_unit: float = max(1.0, absf(numbers[0]))
+			return clamp(absf(numbers[1]) / speed_unit, 0.05, 3.0)
+	if "%" in text or "加成" in text:
+		return clamp(absf(numbers[0]) / 100.0, 0.05, 3.0)
+	return clamp(absf(numbers[0]), 0.05, 3.0)
+
+## 提取第一组“带符号”的增减值
+func _extract_first_signed_delta(text: String) -> Variant:
+	var regex := RegEx.new()
+	regex.compile("[-+]\\d+(?:\\.\\d+)?")
+	var matched: RegExMatch = regex.search(text)
+	if matched == null:
+		return null
+	return float(matched.get_string())
+
+## 按优先级匹配关键词映射到属性
+func _find_spec_stat_by_keyword(
+	clause: String,
+	keyword_map: Dictionary,
+	keyword_priority: Array[String]
+) -> String:
+	for keyword: String in keyword_priority:
+		if keyword in clause:
+			return String(keyword_map.get(keyword, ""))
+	return ""
 
 ##############################################################################
 # 怪物数据查询
@@ -480,11 +720,26 @@ func get_boss_data(boss_id: String) -> Dictionary:
 
 ## 根据分钟获取Boss ID（匹配Minute字段）
 func get_boss_id_by_minute(minute: int) -> String:
+	var candidates: Array[String] = get_boss_ids_by_minute(minute)
+	if candidates.is_empty():
+		return ""
+	return candidates.pick_random()
+
+## 根据分钟获取全部Boss ID
+func get_boss_ids_by_minute(minute: int) -> Array[String]:
+	var ids: Array[String] = []
 	for boss_id: String in boss_monsters.keys():
 		var data: Dictionary = boss_monsters[boss_id]
 		if int(data.get("Minute", -1)) == minute:
-			return boss_id
-	return ""
+			ids.append(boss_id)
+	return ids
+
+## 获取Boss实际使用的怪物ID（用于刷怪）
+func get_boss_spawn_monster_id(boss_id: String) -> String:
+	var data: Dictionary = get_boss_data(boss_id)
+	if data.is_empty():
+		return ""
+	return String(data.get("monster_id", boss_id))
 
 ## 判断怪物是否为Boss
 func is_boss(monster_id: String) -> bool:
@@ -586,11 +841,15 @@ func _parse_shop_effects(effect_text: String) -> Array:
 		var trimmed: String = part.strip_edges()
 		if trimmed.is_empty():
 			continue
-		var kv: PackedStringArray = trimmed.split(":")
-		if kv.size() < 2:
+		var sep_idx: int = trimmed.find(":")
+		if sep_idx == -1:
+			sep_idx = trimmed.find("：")
+		if sep_idx == -1:
 			continue
-		var key: String = kv[0].strip_edges()
-		var value_str: String = kv[1].strip_edges()
+		var key: String = trimmed.substr(0, sep_idx).strip_edges()
+		var value_str: String = trimmed.substr(sep_idx + 1).strip_edges()
+		if key.is_empty() or value_str.is_empty():
+			continue
 		if value_str.begins_with("+"):
 			value_str = value_str.substr(1)
 		value_str = value_str.replace("%", "")
@@ -612,11 +871,11 @@ func _parse_shop_effects(effect_text: String) -> Array:
 func _normalize_shop_effect_key(raw_key: String) -> String:
 	var key: String = raw_key.strip_edges()
 	var mapping: Dictionary = {
-		"SummonCooldownInheritPct": "summon_cdr_inherit",
-		"SummonCooldownInherit": "summon_cdr_inherit",
-		"SummonCritInheritPct": "summon_crit_inherit",
-		"SummonCritInherit": "summon_crit_inherit",
-		"SummonCount": "summon_count",
+		"SummonCooldownInheritPct": "SummonCooldownInherit",
+		"SummonCooldownInherit": "SummonCooldownInherit",
+		"SummonCritInheritPct": "SummonCritInherit",
+		"SummonCritInherit": "SummonCritInherit",
+		"SummonCount": "SummonCount",
 		"EnemyMaterialDropChance": "EnemyMaterialDropRate"
 	}
 	if mapping.has(key):
@@ -944,13 +1203,31 @@ func _load_monster_bosses() -> void:
 		var boss_id: String = raw.get("BossID", "")
 		if boss_id.is_empty():
 			continue
+		var minute: int = int(_parse_float(raw.get("Minute", "")))
+		var resolved_monster_id: String = _resolve_boss_monster_id(boss_id, minute)
 		var boss_data: Dictionary = {
 			"BossID": boss_id,
 			"NameZH": raw.get("NameZH", ""),
 			"NameEN": raw.get("NameEN", ""),
-			"Minute": int(_parse_float(raw.get("Minute", ""))),
-			"behavior": raw.get("Field_15", "")
+			"Minute": minute,
+			"behavior": raw.get("Field_15", ""),
+			"monster_id": resolved_monster_id
 		}
+		if resolved_monster_id != boss_id:
+			push_warning(
+				"[GameData] BossID未在monster.csv中找到，使用兜底怪物: "
+				+ boss_id + " -> " + resolved_monster_id
+			)
 		boss_monsters[boss_id] = boss_data
 	file.close()
 	print("[GameData] Boss数据加载完成: ", boss_monsters.size(), " 条")
+
+func _resolve_boss_monster_id(boss_id: String, minute: int) -> String:
+	if monsters.has(boss_id):
+		return boss_id
+	var fallback_id: String = String(BOSS_FALLBACK_BY_MINUTE.get(minute, ""))
+	if not fallback_id.is_empty() and monsters.has(fallback_id):
+		return fallback_id
+	for monster_id: String in monsters.keys():
+		return monster_id
+	return ""

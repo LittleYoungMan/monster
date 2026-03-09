@@ -44,6 +44,8 @@ var active_summons: Array[Node] = []
 
 ## 基础召唤上限（武器可覆盖）
 const BASE_SUMMON_LIMIT: int = 1
+## 召唤瞬间反馈特效
+const SUMMON_FLASH_VFX_PATH: String = "res://assets/PIC/wuqi/VFX/256/vfx_mask_explosion_core.png"
 
 ##############################################################################
 # 节点引用
@@ -153,10 +155,12 @@ func _calculate_cooldown() -> void:
 	var base_cooldown: float = weapon_template.get("base_cooldown", 5.0)
 	var cooldown_mult: float = weapon_template.get("cooldown_mult", 1.0)
 
-	## 召唤武器专用的CDR继承（来自商店）
-	var cdr_inherit: float = 0.0
-	if player.has_shop_bonus("summon_cdr_inherit"):
-		cdr_inherit = player.get_shop_bonus_value("summon_cdr_inherit") / 100.0
+	## 召唤武器专用CDR继承（角色基础+商店加成）
+	var cdr_inherit_pct: float = player.get_final_stat("SummonCooldownInherit")
+	## 兼容旧存档字段：仅当未写入标准字段时回退读取小写别名
+	if player.has_shop_bonus("summon_cdr_inherit") and not player.has_shop_bonus("SummonCooldownInherit"):
+		cdr_inherit_pct += player.get_shop_bonus_value("summon_cdr_inherit")
+	var cdr_inherit: float = max(0.0, cdr_inherit_pct / 100.0)
 
 	var player_cdr: float = player.get_final_stat("Cooldown")
 	var cdr_mult: float = 1.0 - (cdr_inherit * player_cdr / 100.0)
@@ -166,7 +170,7 @@ func _calculate_cooldown() -> void:
 
 	print("[SummonWeapon] 冷却计算:")
 	print("  - base_cooldown=", base_cooldown, "s")
-	print("  - cdr_inherit=", cdr_inherit * 100, "%")
+	print("  - cdr_inherit=", cdr_inherit_pct, "%")
 	print("  - current_cooldown=", current_cooldown, "s")
 
 ##############################################################################
@@ -203,8 +207,37 @@ func _perform_summon() -> void:
 	parent_node.add_child(summon)
 	summon.initialize(summon_config, player)
 	active_summons.append(summon)
+	_play_summon_feedback(summon.global_position)
 
 	print("[SummonWeapon] 召唤完成: ", active_summons.size(), "/", summon_limit)
+
+func _play_summon_feedback(spawn_pos: Vector2) -> void:
+	if sprite:
+		var base_scale: Vector2 = sprite.scale
+		var tween_weapon: Tween = create_tween()
+		tween_weapon.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		tween_weapon.tween_property(sprite, "scale", base_scale * 1.16, 0.07)
+		tween_weapon.tween_property(sprite, "scale", base_scale, 0.14)
+	if not ResourceLoader.exists(SUMMON_FLASH_VFX_PATH):
+		return
+	var parent_node: Node = get_tree().current_scene
+	if not parent_node:
+		parent_node = get_parent()
+	if not parent_node:
+		return
+	var vfx_node: Node2D = Node2D.new()
+	var vfx_sprite: Sprite2D = Sprite2D.new()
+	vfx_sprite.texture = load(SUMMON_FLASH_VFX_PATH)
+	vfx_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	vfx_sprite.modulate = Color(0.88, 0.96, 1.0, 0.92)
+	vfx_sprite.scale = Vector2(0.18, 0.18)
+	vfx_node.add_child(vfx_sprite)
+	parent_node.add_child(vfx_node)
+	vfx_node.global_position = spawn_pos
+	var tween: Tween = vfx_node.create_tween()
+	tween.tween_property(vfx_sprite, "scale", Vector2(0.42, 0.42), 0.20)
+	tween.parallel().tween_property(vfx_sprite, "modulate:a", 0.0, 0.20)
+	tween.tween_callback(vfx_node.queue_free)
 
 func _cleanup_dead_summons() -> void:
 	var cleaned_summons: Array[Node] = []
@@ -222,8 +255,12 @@ func get_summon_limit() -> int:
 	if weapon_limit > base_limit:
 		base_limit = weapon_limit
 
-	var extra_summons: int = int(player.get_shop_bonus_value("summon_count"))
-	return base_limit + extra_summons
+	var stat_summons: int = int(round(player.get_final_stat("SummonCount")))
+	var extra_summons: int = 0
+	## 兼容旧存档字段：仅当未写入标准字段时回退读取小写别名
+	if player.has_shop_bonus("summon_count") and not player.has_shop_bonus("SummonCount"):
+		extra_summons = int(round(player.get_shop_bonus_value("summon_count")))
+	return max(1, base_limit + stat_summons + extra_summons)
 
 ##############################################################################
 # 召唤配置（weapon.csv + summon.csv）
@@ -256,19 +293,35 @@ func _calculate_summon_config() -> Dictionary:
 
 	config["damage"] = (base_damage + bonus_dmg) * all_dmg_mult * quality_mult + weapon_dmg_bonus
 
-	## 召唤暴击继承（商店解锁）
-	if player.has_shop_bonus("summon_crit_inherit"):
-		var crit_inherit_rate: float = player.get_shop_bonus_value("summon_crit_inherit") / 100.0
-		config["crit_rate"] = player.get_final_stat("CritRate") * crit_inherit_rate
-		config["crit_dmg"] = player.get_final_stat("CritDamage") * crit_inherit_rate
-		print("[SummonWeapon] 召唤暴击继承=", crit_inherit_rate * 100, "%")
+	## 召唤暴击继承（角色基础+商店加成）
+	var crit_dmg_inherit_pct: float = player.get_final_stat("SummonCritInherit")
+	var crit_rate_inherit_pct: float = player.get_final_stat("SummonCritRateInherit")
+	## 兼容旧存档字段：仅当未写入标准字段时回退读取小写别名
+	if player.has_shop_bonus("summon_crit_inherit") and not player.has_shop_bonus("SummonCritInherit"):
+		var shop_inherit_pct: float = player.get_shop_bonus_value("summon_crit_inherit")
+		crit_dmg_inherit_pct += shop_inherit_pct
+		crit_rate_inherit_pct += shop_inherit_pct
+	if crit_rate_inherit_pct <= 0.0 and crit_dmg_inherit_pct > 0.0:
+		crit_rate_inherit_pct = crit_dmg_inherit_pct
+	if crit_rate_inherit_pct > 0.0 or crit_dmg_inherit_pct > 0.0:
+		config["crit_rate"] = player.get_final_stat("CritRate") * (crit_rate_inherit_pct / 100.0)
+		config["crit_dmg"] = player.get_final_stat("CritDamage") * (crit_dmg_inherit_pct / 100.0)
+		print(
+			"[SummonWeapon] 召唤暴击继承: 会心率=",
+			crit_rate_inherit_pct,
+			"% 会心伤害=",
+			crit_dmg_inherit_pct,
+			"%"
+		)
 	else:
 		config["crit_rate"] = 0.0
 		config["crit_dmg"] = 0.0
 		print("[SummonWeapon] 召唤暴击继承未解锁")
 
 	config["attack_speed"] = weapon_template.get("summon_attack_speed", 1.0)
-	config["attack_range"] = weapon_template.get("summon_attack_range", 600.0)
+	var summon_range: float = weapon_template.get("summon_attack_range", 600.0)
+	summon_range += player.get_final_stat("Range")
+	config["attack_range"] = max(120.0, summon_range)
 
 	## 图标优先使用weapon模板，否则回落到summon.csv
 	config["sprite_id"] = weapon_template.get("summon_sprite_id", "")

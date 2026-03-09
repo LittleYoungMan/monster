@@ -35,7 +35,7 @@ extends Area2D
 @export var hint_text: String = "按 E 进入商店"
 
 ## 是否自动进入（无需按键）
-@export var auto_enter: bool = true
+@export var auto_enter: bool = false
 
 ##############################################################################
 # 节点引用
@@ -146,7 +146,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	
 	## 按E进入商店
-	if event.is_action_pressed("ui_accept"):  # E键或Enter
+	if _is_interact_pressed(event):
 		_enter_shop()
 
 ##############################################################################
@@ -206,7 +206,7 @@ func _load_sprite() -> void:
 		return
 	
 	## 尝试加载商店门图片
-	var sprite_path: String = "res://assets/PIC/shop/256/shop_door.png"
+	var sprite_path: String = "res://assets/PIC/map/256/shop_door.png"
 	if ResourceLoader.exists(sprite_path):
 		sprite.texture = load(sprite_path)
 		sprite.scale = Vector2(0.5, 0.5)  # 256→128px
@@ -239,6 +239,22 @@ func _generate_placeholder_sprite() -> void:
 func _play_enter_sound() -> void:
 	# TODO: 添加音效播放
 	pass
+
+## 统一交互输入检测
+## 优先使用InputMap中的interact，其次回退到常见键位
+func _is_interact_pressed(event: InputEvent) -> bool:
+	if event.is_action_pressed("interact"):
+		return true
+	if event.is_action_pressed("ui_accept"):
+		return true
+	if event is InputEventKey:
+		var key_event: InputEventKey = event
+		if key_event.pressed and not key_event.echo:
+			if key_event.keycode == KEY_E:
+				return true
+			if key_event.keycode == KEY_ENTER or key_event.keycode == KEY_KP_ENTER:
+				return true
+	return false
 
 
 ##############################################################################

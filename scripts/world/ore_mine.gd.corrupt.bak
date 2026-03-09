@@ -1,0 +1,197 @@
+##############################################################################
+# OreMine - 矿点脚本（沿地图四周分布，多点独立刷新）
+# - 近战可一刀打到多个矿点；每点独立30s刷新
+# - 掉落区间对齐工坊.xlsx矿晶预算：默认5-8，阶段加成+1/+2/+3
+##############################################################################
+extends StaticBody2D
+
+##############################################################################
+# 常量
+##############################################################################
+
+## 矿点被击碎所需命中次数
+const MAX_HP: int = 3
+
+## 矿点显示缩放基准
+const MINE_SPRITE_SCALE: float = 1.4
+
+## 矿点贴图缩放（相对于贴图原始尺寸）
+const MINE_TEXTURE_SCALE: float = 0.5
+
+## 掉落点位偏移（避免完全重叠）
+const PICKUP_SPAWN_OFFSET: float = 8.0
+
+##############################################################################
+# 导出配置
+##############################################################################
+
+## 矿点ID（用于日志）
+@export var mine_id: String = "
+
+## 刷新时间（秒）
+@export var respawn_time: float = 30.0
+
+## 掉落区间
+@export var drop_min: int = 5
+@export var drop_max: int = 8
+
+## 阶段加成（S2/S3/S4）
+@export var stage_bonus_s2: int = 1
+@export var stage_bonus_s3: int = 2
+@export var stage_bonus_s4: int = 3
+
+##############################################################################
+# 运行期状态
+##############################################################################
+
+var current_hp: int = MAX_HP
+var is_available: bool = true
+
+##############################################################################
+# 节点引用
+##############################################################################
+
+@onready var sprite: Sprite2D = 
+@onready var collision_shape: CollisionShape2D = 
+@onready var respawn_timer: Timer = 
+
+## 贴图缓存
+var ore_textures: Array[Texture2D] = []
+
+##############################################################################
+# 初始化
+##############################################################################
+
+func _ready() -> void:
+	add_to_group( mine)
+	collision_layer = CollisionLayers.get_layer_mask(CollisionLayers.ENEMY)
+	collision_mask = 0
+	z_index = 5
+	if respawn_timer:
+		respawn_timer.timeout.connect(_on_respawn_timeout)
+	# 预加载贴图
+	ore_textures = _load_ore_textures()
+	_reset_mine()
+
+## 初始化矿点配置
+func initialize(config: Dictionary) -> void:
+	mine_id = config.get(mine_id, mine_id)
+	respawn_time = float(config.get(respawn_time, respawn_time))
+	drop_min = int(config.get(drop_min, drop_min))
+	drop_max = int(config.get(drop_max, drop_max))
+	stage_bonus_s2 = int(config.get(stage_bonus_s2, stage_bonus_s2))
+	stage_bonus_s3 = int(config.get(stage_bonus_s3, stage_bonus_s3))
+	stage_bonus_s4 = int(config.get(stage_bonus_s4, stage_bonus_s4))
+	_reset_mine()
+
+##############################################################################
+# 受击与采集
+##############################################################################
+
+func take_damage(_dmg: float) -> void:
+	if not is_available:
+		return
+	current_hp -= 1
+	if current_hp <= 0:
+		_harvest()
+
+func _harvest() -> void:
+	is_available = false
+	var ore_drop: int = randi_range(drop_min, drop_max)
+	var bonus: int = _get_stage_bonus()
+	_spawn_ore_pickup(ore_drop + bonus)
+	_disable_mine()
+	_start_respawn_timer()
+	print([OreMine] 采集: , mine_id,  +, ore_drop + bonus)
+
+func _spawn_ore_pickup(amount: int) -> void:
+	var pickup_scene: PackedScene = load(res://scenes/world/pickup.tscn)
+	if not pickup_scene:
+		return
+	var pickup: Area2D = pickup_scene.instantiate()
+	pickup.global_position = global_position + Vector2(
+		randf_range(-PICKUP_SPAWN_OFFSET, PICKUP_SPAWN_OFFSET),
+		randf_range(-PICKUP_SPAWN_OFFSET, PICKUP_SPAWN_OFFSET)
+	)
+	var config: Dictionary = {
+		type: ore,
+		ore: amount
+	}
+	if pickup.has_method(initialize):
+		pickup.initialize(config)
+	get_parent().add_child(pickup)
+
+##############################################################################
+# 刷新
+##############################################################################
+
+func _start_respawn_timer() -> void:
+	if respawn_timer:
+		respawn_timer.wait_time = respawn_time
+		respawn_timer.start()
+
+func _on_respawn_timeout() -> void:
+	_reset_mine()
+
+func _reset_mine() -> void:
+	is_available = true
+	current_hp = MAX_HP
+	_enable_mine()
+
+func _disable_mine() -> void:
+	if sprite:
+		sprite.visible = false
+	if collision_shape:
+		collision_shape.disabled = true
+
+func _enable_mine() -> void:
+	if sprite:
+		_assign_texture()
+		if sprite.texture:
+			sprite.visible = true
+	if collision_shape:
+		collision_shape.disabled = false
+
+##############################################################################
+# 阶段加成
+##############################################################################
+
+func _get_stage_bonus() -> int:
+	var minute: int = 0
+	if GameManager:
+		minute = GameManager.get_current_minute()
+	if minute >= 15:
+		return stage_bonus_s4
+	if minute >= 10:
+		return stage_bonus_s3
+	if minute >= 5:
+		return stage_bonus_s2
+	return 0
+
+##############################################################################
+# 贴图处理
+##############################################################################
+
+func _load_ore_textures() -> Array[Texture2D]:
+	var paths: Array[String] = [
+		res://assets/PIC/map/256/ore_1.png,
+		res://assets/PIC/map/256/ore_2.png
+	]
+	var list: Array[Texture2D] = []
+	for p in paths:
+		if ResourceLoader.exists(p):
+			var tex: Texture2D = load(p)
+			if tex:
+				list.append(tex)
+	return list
+
+func _assign_texture() -> void:
+	if not sprite:
+		return
+	if ore_textures.size() > 0:
+		sprite.texture = ore_textures[randi() % ore_textures.size()]
+		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		sprite.scale = Vector2(MINE_SPRITE_SCALE * MINE_TEXTURE_SCALE, MINE_SPRITE_SCALE * MINE_TEXTURE_SCALE)
+	else:
+		sprite.texture = null
+		sprite.visible = false

@@ -25,10 +25,10 @@ extends Node
 ## 每分钟刷怪频率（值越大 => 刷怪越快）
 ## key为“起始分钟”（含），value为该阶段每分钟刷怪次数
 const SPAWN_RATE_PER_MINUTE: Dictionary = {
-	0:  12.0,   # 0-5分钟
-	5:  20.0,   # 5-10分钟
-	10: 30.0,  # 10-15分钟
-	15: 45.0   # 15-20分钟
+	0:  6.8,    # 0-5分钟：优先凑武器，不提前压死
+	5:  9.6,    # 5-10分钟：转向输出门槛
+	10: 13.8,   # 10-15分钟：明显提升生存压力
+	15: 18.2    # 15-20分钟：输出+生存双压力
 }
 
 ## 获取刷怪间隔（秒）
@@ -40,10 +40,10 @@ func get_spawn_interval(minute: int) -> float:
 
 ## 每次刷怪批量（同样按阶段配置）
 const SPAWN_BATCH_SIZE: Dictionary = {
-	0:  3,
-	5:  5,
-	10: 7,
-	15: 9
+	0:  2,
+	5:  3,
+	10: 4,
+	15: 5
 }
 
 ## 获取当前阶段的刷怪数量
@@ -58,9 +58,50 @@ func get_batch_size(minute: int) -> int:
 
 ## 难度倍率：可作为全局增益或惩罚（目前默认1.0）
 const DIFFICULTY_MULT: Dictionary = {
-	"hp": 1.0,
-	"damage": 1.0,
-	"speed": 1.0
+	"hp": 0.78,
+	"damage": 0.62,
+	"speed": 0.92
+}
+
+## 二轮生存曲线缓冲：按分钟阶段压低怪物生命
+const ENEMY_HP_STAGE_MULT: Dictionary = {
+	0: 0.92,
+	5: 1.02,
+	10: 1.18,
+	15: 1.34
+}
+
+## 二轮生存曲线缓冲：按分钟阶段压低怪物伤害
+const ENEMY_DAMAGE_STAGE_MULT: Dictionary = {
+	0: 0.88,
+	5: 0.98,
+	10: 1.20,
+	15: 1.42
+}
+
+## 三轮生存曲线：10分钟后逐段提速，提升压迫感
+const ENEMY_SPEED_STAGE_MULT: Dictionary = {
+	0: 0.95,
+	5: 1.00,
+	10: 1.12,
+	15: 1.25
+}
+
+## P1.1 经济曲线：按分钟阶段修正小怪金币产出（前高后稳）
+## 作用：缓解前5分钟“买不起第一轮武器/卡牌”，同时避免后期金币爆仓
+const ENEMY_GOLD_STAGE_MULT: Dictionary = {
+	0: 2.30,
+	5: 1.80,
+	10: 1.30,
+	15: 1.00
+}
+
+## 三轮经济：15分钟后提升矿石可得性，允许补短板
+const ENEMY_ORE_DROP_CHANCE_BY_MINUTE: Dictionary = {
+	0: 0.06,
+	5: 0.07,
+	10: 0.09,
+	15: 0.12
 }
 
 ##############################################################################
@@ -117,10 +158,10 @@ const BOSS_SPAWN_MINIONS: Dictionary = {
 }
 
 ## Boss小怪刷新间隔（秒）
-const BOSS_MINION_SPAWN_INTERVAL: float = 10.0
+const BOSS_MINION_SPAWN_INTERVAL: float = 8.0
 
 ## 每次Boss小怪刷新数量
-const BOSS_MINION_SPAWN_COUNT: int = 3
+const BOSS_MINION_SPAWN_COUNT: int = 4
 
 ##############################################################################
 # 其他扩展规则
@@ -133,7 +174,7 @@ const POO_SPAWN_NEAR_ORE_RADIUS: float = 200.0
 const SPLIT_ORB_SPAWN_IN_VIEW_ONLY: bool = true
 
 ## 全局怪物数量上限
-const MAX_ENEMY_COUNT: int = 220
+const MAX_ENEMY_COUNT: int = 140
 
 ## 是否使用“单怪物类型上限”（与MAX_ENEMY_COUNT叠加使用）
 const USE_INDIVIDUAL_CAP: bool = true
@@ -145,6 +186,26 @@ const USE_INDIVIDUAL_CAP: bool = true
 ## 获取当前分钟的刷怪频率
 func _get_spawn_rate(minute: int) -> float:
 	return _get_config_value(SPAWN_RATE_PER_MINUTE, minute)
+
+## 二轮校准：获取怪物HP阶段系数
+func get_enemy_hp_stage_mult(minute: int) -> float:
+	return _get_config_value(ENEMY_HP_STAGE_MULT, minute)
+
+## 二轮校准：获取怪物伤害阶段系数
+func get_enemy_damage_stage_mult(minute: int) -> float:
+	return _get_config_value(ENEMY_DAMAGE_STAGE_MULT, minute)
+
+## 三轮校准：获取怪物速度阶段系数
+func get_enemy_speed_stage_mult(minute: int) -> float:
+	return _get_config_value(ENEMY_SPEED_STAGE_MULT, minute)
+
+## P1.1 经济曲线：获取怪物金币阶段系数
+func get_enemy_gold_stage_mult(minute: int) -> float:
+	return _get_config_value(ENEMY_GOLD_STAGE_MULT, minute)
+
+## 三轮经济：获取怪物矿石掉率基线
+func get_enemy_ore_drop_base_chance(minute: int) -> float:
+	return _get_config_value(ENEMY_ORE_DROP_CHANCE_BY_MINUTE, minute)
 
 ## 通用配置读取：根据minute匹配最近的“起始分钟”配置
 ## 参数：
@@ -187,4 +248,6 @@ func print_current_config(minute: int) -> void:
 	print("刷怪间隔: ", get_spawn_interval(minute), "秒")
 	print("批量大小: ", get_batch_size(minute))
 	print("难度倍率: HP=", DIFFICULTY_MULT["hp"], " 伤害=", DIFFICULTY_MULT["damage"])
+	print("阶段缓冲: HP=", get_enemy_hp_stage_mult(minute), " 伤害=", get_enemy_damage_stage_mult(minute), " 速度=", get_enemy_speed_stage_mult(minute))
+	print("经济倍率: 金币=", get_enemy_gold_stage_mult(minute), " 矿石基线=", get_enemy_ore_drop_base_chance(minute))
 	print("阶段: S", get_stage(minute))

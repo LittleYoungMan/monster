@@ -212,16 +212,24 @@ func _fire_shots(base_dir: Vector2, damage: float) -> void:
 	var projectile_speed: float = projectile_cfg.get("speed_pxps", weapon_template.get("projectile_speed", 600.0))
 	var pierce_count: int = weapon_template.get("pierce_count", 0)
 	var pierce_dmg_mult: float = weapon_template.get("pierce_dmg_mult", 1.0)
+	var extra_pierce: int = int(round(player.get_final_stat("Penetration")))
+	var extra_pierce_dmg_pct: float = player.get_final_stat("PenetrationDamage")
 	var sprite_id: String = projectile_cfg.get("sprite_id", weapon_template.get("sprite_id", ""))
 	var hit_limit: int = int(projectile_cfg.get("hit_limit", 0))
 	var projectile_type: String = projectile_cfg.get("type", "")
 	if hit_limit > 0:
 		pierce_count = max(hit_limit - 1, 0)
+	pierce_count = max(0, pierce_count + extra_pierce)
+	pierce_dmg_mult = clamp(
+		pierce_dmg_mult * (1.0 + extra_pierce_dmg_pct / 100.0),
+		0.1,
+		3.0
+	)
 
-	var attack_range: float = weapon_template.get("attack_range", 500.0)
+	var attack_range: float = _get_effective_range()
 	var use_weapon_range: bool = projectile_cfg.get("use_weapon_range", true)
 	if not use_weapon_range:
-		attack_range = 800.0
+		attack_range = max(attack_range, 800.0)
 
 	var hit_radius: float = projectile_cfg.get("hit_radius_px", 0.0)
 	var homing: bool = projectile_cfg.get("homing", false)
@@ -283,19 +291,24 @@ func _get_target_position(base_dir: Vector2) -> Vector2:
 	var nearest_enemy: Node2D = _find_nearest_enemy()
 	if nearest_enemy:
 		return nearest_enemy.global_position
-	var attack_range: float = weapon_template.get("attack_range", 500.0)
-	attack_range = max(25.0, attack_range)
+	var attack_range: float = _get_effective_range()
 	return global_position + base_dir * attack_range
 
 ## 查找最近敌人
 func _find_nearest_enemy() -> Node2D:
-	var attack_range: float = weapon_template.get("attack_range", 500.0)
-	attack_range = max(25.0, attack_range)
+	var attack_range: float = _get_effective_range()
 	## 先找敌人，若无则找矿点
 	var nearest_enemy: Node2D = _find_nearest_in_group("enemy", attack_range)
 	if nearest_enemy:
 		return nearest_enemy
 	return _find_nearest_in_group("mine", attack_range)
+
+func _get_effective_range() -> float:
+	var base_range: float = weapon_template.get("attack_range", 500.0)
+	var range_bonus: float = 0.0
+	if player:
+		range_bonus = player.get_final_stat("Range")
+	return max(25.0, base_range + range_bonus)
 
 ## 查找指定分组内最近目标
 ##

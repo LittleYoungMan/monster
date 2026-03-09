@@ -1,4 +1,4 @@
-##############################################################################
+﻿##############################################################################
 # Enemy - 敌人脚本
 #
 # 设计目的：
@@ -83,18 +83,6 @@ var attack_timer: float = 0.0
 ## 行为描述文本（来自remake字段，保留原文）
 var behavior: String = ""
 
-## 贴图脚底布局缓存（key=monster_id）
-static var sprite_layout_cache: Dictionary = {}
-
-## 额外会心率（由EnemySpawner按玩家属性注入）
-var extra_crit_chance: float = 0.0
-
-## 刷怪时注入的难度修正（由EnemySpawner设置）
-var spawn_hp_mult: float = 1.0
-var spawn_speed_mult: float = 1.0
-var spawn_crit_bonus: float = 0.0
-var spawn_difficulty_applied: bool = false
-
 ## 存活时间（用于“存活X秒后强化”等行为）
 var alive_time: float = 0.0
 
@@ -104,18 +92,6 @@ var is_enhanced: bool = false
 ## 减速状态
 var slow_timer: float = 0.0
 var slow_mult: float = 1.0
-
-## 燃烧状态（持续掉血）
-var burn_timer: float = 0.0
-var burn_tick_timer: float = 0.0
-var burn_tick_damage: float = 0.0
-
-## 冻结状态（无法行动）
-var freeze_timer: float = 0.0
-
-## 标记状态（受伤加深）
-var mark_timer: float = 0.0
-const MARK_DAMAGE_MULT: float = 1.2
 
 ## 击退速度
 var knockback_velocity: Vector2 = Vector2.ZERO
@@ -187,11 +163,6 @@ const BURST_MAX: int = 3
 ## 血条UI
 @onready var health_bar: ProgressBar = $HealthBar
 
-## 视觉表现开关（用于测试与回滚）
-@export var enable_visual_liveliness: bool = true
-## 动态深度排序开关：按Y轴更新z_index
-@export var enable_dynamic_z_sort: bool = true
-
 ##############################################################################
 # 呼吸动画
 ##############################################################################
@@ -210,8 +181,8 @@ const BREATHE_IDLE_SPEED: float = 1.15
 ## 单位：Hz
 ## 作用：移动时的步态起伏节奏
 ## 调整范围：2.0-4.0
-## 当前值：3.35
-const BREATHE_MOVE_SPEED: float = 3.35
+## 当前值：3.0
+const BREATHE_MOVE_SPEED: float = 3.0
 
 ## 静止呼吸上移幅度
 ## 单位：像素
@@ -224,8 +195,8 @@ const BREATHE_IDLE_OFFSET: float = 0.6
 ## 单位：像素
 ## 作用：移动时的轻微步态起伏（不缩放）
 ## 调整范围：0.6-2.0
-## 当前值：1.75
-const MOVE_BOB_OFFSET: float = 1.75
+## 当前值：1.2
+const MOVE_BOB_OFFSET: float = 1.2
 
 ## 步态波形锐化
 ## 单位：倍率
@@ -233,47 +204,11 @@ const MOVE_BOB_OFFSET: float = 1.75
 ## 调整范围：1.0-2.0
 ## 当前值：1.4
 const MOVE_BOB_SHARPNESS: float = 1.4
-## 移动时左右偏移（像素）
-const MOVE_SWAY_X_OFFSET: float = 1.9
-## 移动时最大倾斜（弧度）
-const MOVE_TILT_MAX: float = 0.12
-## 脚步挤压幅度
-const MOVE_STEP_SQUASH: float = 0.065
-## 静止呼吸轻微形变
-const IDLE_SQUASH: float = 0.018
-## 动态深度排序参数
-const Z_SORT_SCALE: float = 0.10
-const Z_SORT_BIAS: int = 105
-## 地面阴影透明度基线
-const SHADOW_BASE_ALPHA: float = 0.38
-## 敌人全局色调（与地图/角色统一）
-const ENEMY_WORLD_TINT: Color = Color(0.95, 0.98, 1.0, 1.0)
-## 受击/死亡反馈特效
-const HIT_IMPACT_VFX_PATH: String = "res://assets/PIC/wuqi/VFX/256/vfx_mask_hit_spark.png"
-const DEATH_BURST_VFX_PATH: String = "res://assets/PIC/wuqi/VFX/256/vfx_mask_explosion_core.png"
-const HIT_IMPACT_COOLDOWN: float = 0.05
-## 血条显示策略：受击后短暂显示并淡出
-const HEALTH_BAR_SHOW_DURATION: float = 1.75
-const HEALTH_BAR_FADE_SPEED: float = 8.0
-## 伤害飘字参数
-const DAMAGE_FLOAT_DURATION: float = 0.44
-const DAMAGE_FLOAT_UPWARD: float = 42.0
 
 ## 记录初始尺度与位置
 var base_sprite_scale: Vector2 = Vector2.ONE
 var base_sprite_position: Vector2 = Vector2.ZERO
 var breathe_initialized: bool = false
-## 命中反馈
-var hit_feedback_timer: float = 0.0
-var feedback_scale_mul: Vector2 = Vector2.ONE
-var feedback_rot_offset: float = 0.0
-## 地面阴影
-var ground_shadow: Sprite2D = null
-var shadow_base_offset_y: float = 10.0
-## 受击特效节流
-var hit_impact_cooldown_left: float = 0.0
-## 血条可见倒计时
-var health_bar_show_timer: float = 0.0
 
 ##############################################################################
 # 初始化
@@ -295,11 +230,9 @@ func initialize(id: String, current_minute: int) -> void:
 	if not is_node_ready():
 		await ready
 
-	spawn_difficulty_applied = false
 	_calculate_stats(current_minute)
 	_parse_attack_type()
 	_parse_behavior()
-	_apply_spawn_difficulty_if_ready()
 	_setup_collision()
 	_load_sprite()
 
@@ -314,8 +247,7 @@ func initialize(id: String, current_minute: int) -> void:
 	if health_bar:
 		health_bar.max_value = max_hp
 		health_bar.value = current_hp
-		health_bar.visible = false
-		health_bar.modulate.a = 0.0
+		health_bar.visible = true
 
 	print("[Enemy] 初始化: ", monster_data.get("NameZH", monster_id), " HP=", int(max_hp), " 攻击类型=", attack_type)
 
@@ -323,13 +255,8 @@ func _ready() -> void:
 	## 统一加入敌人组，方便查询与统计
 	add_to_group("enemy")
 	breathe_time = randf() * TAU
-	_ensure_ground_shadow()
-	_update_dynamic_z_index()
 
 func _process(delta: float) -> void:
-	_update_hit_feedback(delta)
-	hit_impact_cooldown_left = max(0.0, hit_impact_cooldown_left - delta)
-	_update_health_bar_visibility(delta)
 	## 呼吸动画更新
 	_update_breathe(delta)
 
@@ -348,13 +275,13 @@ func _calculate_stats(minute: int) -> void:
 	var dmg_growth_text: String = monster_data.get("GrowDamage", "+2/min")
 
 	var dmg_growth: float = 2.0
-	if not dmg_growth_text.is_empty():
-		var normalized: String = dmg_growth_text.strip_edges().replace("+", "")
-		var parts: PackedStringArray = normalized.split("/", false)
+	if "+/min" in dmg_growth_text:
+		var parts: PackedStringArray = dmg_growth_text.split("/")
 		if parts.size() > 0:
-			var number_text: String = parts[0].strip_edges()
-			if not number_text.is_empty():
-				dmg_growth = float(number_text)
+			dmg_growth = float(parts[0].replace("+", ""))
+	else:
+		if not dmg_growth_text.is_empty():
+			dmg_growth = float(dmg_growth_text.replace("+", ""))
 
 	max_hp = base_hp + hp_growth * float(minute)
 	current_hp = max_hp
@@ -369,18 +296,6 @@ func _calculate_stats(minute: int) -> void:
 		current_hp = max_hp
 		damage *= config.DIFFICULTY_MULT.get("damage", 1.0)
 		speed *= config.DIFFICULTY_MULT.get("speed", 1.0)
-		## 二轮校准：按分钟分段压低后期陡增，减少“中后期一碰就死”
-		if config.has_method("get_enemy_hp_stage_mult"):
-			max_hp *= float(config.call("get_enemy_hp_stage_mult", minute))
-			current_hp = max_hp
-		if config.has_method("get_enemy_damage_stage_mult"):
-			damage *= float(config.call("get_enemy_damage_stage_mult", minute))
-		if config.has_method("get_enemy_speed_stage_mult"):
-			speed *= float(config.call("get_enemy_speed_stage_mult", minute))
-	max_hp = max(1.0, max_hp)
-	current_hp = clamp(current_hp, 0.0, max_hp)
-	damage = max(1.0, damage)
-	speed = max(10.0, speed)
 
 ##############################################################################
 # 行为解析（CSV字段 -> 内部状态）
@@ -405,25 +320,25 @@ func _parse_attack_type() -> void:
 
 		## 远程射速与弹速（按文本关键词调整）
 		if "射速极快" in attack_way or "极快" in attack_way or "快" in attack_way:
-			attack_cooldown = 0.45
-			projectile_speed = 460.0
+			attack_cooldown = 0.3
+			projectile_speed = 500.0
 		elif "中速" in attack_way or "中" in attack_way:
-			attack_cooldown = 0.9
-			projectile_speed = 380.0
+			attack_cooldown = 0.8
+			projectile_speed = 400.0
 		elif "慢速" in attack_way or "慢" in attack_way:
-			attack_cooldown = 2.2
-			projectile_speed = 180.0
+			attack_cooldown = 2.0
+			projectile_speed = 200.0
 		else:
-			attack_cooldown = 1.1
-			projectile_speed = 280.0
+			attack_cooldown = 1.0
+			projectile_speed = 300.0
 	else:
 		attack_type = "近战"
 		attack_range = 50.0
 		## 近战移速修正（快/中/慢）
 		if "极快" in attack_way or "快" in attack_way:
-			speed *= 1.35
+			speed *= 1.5
 		elif "中" in attack_way:
-			speed *= 1.15
+			speed *= 1.2
 		elif "慢" in attack_way:
 			speed *= 0.8
 
@@ -482,14 +397,6 @@ func _setup_collision() -> void:
 	var hurt_shape: CircleShape2D = CircleShape2D.new()
 	hurt_shape.radius = radius + 10.0
 	hurt_box_shape.shape = hurt_shape
-	if health_bar:
-		var bar_w: float = clamp(radius * 1.8, 56.0, 130.0)
-		health_bar.custom_minimum_size = Vector2(bar_w, 6)
-		health_bar.offset_left = -bar_w * 0.5
-		health_bar.offset_right = bar_w * 0.5
-		health_bar.offset_top = -(radius + 30.0)
-		health_bar.offset_bottom = health_bar.offset_top + 8.0
-		_apply_health_bar_style()
 
 func _get_player_collision_radius() -> float:
 	if not player or not is_instance_valid(player):
@@ -508,15 +415,11 @@ func _load_sprite() -> void:
 	if ResourceLoader.exists(sprite_path):
 		sprite.texture = load(sprite_path)
 		var size_text: String = monster_data.get("Size", "小型")
-		if "大" in size_text:
-			sprite.scale = Vector2(0.50, 0.50)
-		elif "中" in size_text:
-			sprite.scale = Vector2(0.40, 0.40)
+		if "中" in size_text:
+			sprite.scale = Vector2(0.375, 0.375)
 		else:
-			sprite.scale = Vector2(0.30, 0.30)
-		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-		_apply_sprite_foot_layout(sprite.texture)
-		sprite.self_modulate = ENEMY_WORLD_TINT
+			sprite.scale = Vector2(0.25, 0.25)
+		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	else:
 		_generate_placeholder_sprite()
 	_init_breathe_base()
@@ -528,59 +431,13 @@ func _generate_placeholder_sprite() -> void:
 	else:
 		img.fill(Color(0.8, 0.2, 0.2, 1.0))
 	sprite.texture = ImageTexture.create_from_image(img)
-	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-	sprite.centered = true
-	sprite.position = Vector2.ZERO
-	sprite.self_modulate = ENEMY_WORLD_TINT
 	_init_breathe_base()
-
-## 裁剪透明边并将脚底对齐到角色原点，减少“贴图悬浮感”
-func _apply_sprite_foot_layout(texture: Texture2D) -> void:
-	if not sprite or not texture:
-		return
-	if sprite_layout_cache.has(monster_id):
-		var cached_layout: Dictionary = sprite_layout_cache[monster_id]
-		sprite.centered = bool(cached_layout.get("centered", true))
-		sprite.position = cached_layout.get("position", Vector2.ZERO)
-		return
-	var img: Image = texture.get_image()
-	if img == null:
-		sprite.centered = true
-		sprite.position = Vector2.ZERO
-		return
-	var w: int = img.get_width()
-	var h: int = img.get_height()
-	var min_x: int = w
-	var max_y: int = -1
-	for y in range(h):
-		for x in range(w):
-			if img.get_pixel(x, y).a <= 0.01:
-				continue
-			if x < min_x:
-				min_x = x
-			if y > max_y:
-				max_y = y
-	if max_y == -1:
-		sprite.centered = true
-		sprite.position = Vector2.ZERO
-		return
-	sprite.centered = false
-	var scale_value: Vector2 = sprite.scale
-	var min_x_px: float = float(min_x) * scale_value.x
-	var max_y_px: float = float(max_y) * scale_value.y
-	sprite.position = Vector2(-min_x_px, -max_y_px)
-	sprite_layout_cache[monster_id] = {
-		"centered": sprite.centered,
-		"position": sprite.position
-	}
 
 func _init_breathe_base() -> void:
 	if not sprite:
 		return
 	base_sprite_scale = sprite.scale
 	base_sprite_position = sprite.position
-	sprite.rotation = 0.0
-	_refresh_shadow_profile()
 	breathe_initialized = true
 
 func _update_breathe(delta: float) -> void:
@@ -594,111 +451,18 @@ func _update_breathe(delta: float) -> void:
 	var speed_value: float = lerp(BREATHE_IDLE_SPEED, BREATHE_MOVE_SPEED, speed_ratio)
 	breathe_time += delta * speed_value
 
-	var step_wave: float = abs(sin(breathe_time))
-	var step_centered: float = (step_wave - 0.5) * 2.0
-	var step_sharp: float = sign(step_centered) * pow(abs(step_centered), MOVE_BOB_SHARPNESS)
-	var move_weight: float = smoothstep(0.05, 0.9, speed_ratio)
-	var wave: float = sin(breathe_time)
-	var offset_y: float = lerp(wave * BREATHE_IDLE_OFFSET, step_sharp * MOVE_BOB_OFFSET, move_weight)
-	var offset_x: float = 0.0
-	var target_rot: float = 0.0
-	var idle_squash_wave: float = sin(breathe_time * 0.62) * IDLE_SQUASH
-	var scale_x_mul: float = 1.0 + idle_squash_wave
-	var scale_y_mul: float = 1.0 - idle_squash_wave
-
-	if enable_visual_liveliness:
-		var vel_x_ratio: float = clamp(velocity.x / max(move_speed, 1.0), -1.0, 1.0)
-		offset_x = vel_x_ratio * MOVE_SWAY_X_OFFSET * move_weight
-		target_rot = vel_x_ratio * MOVE_TILT_MAX * move_weight
-		var impact: float = max(0.0, -step_sharp) * move_weight
-		scale_x_mul += MOVE_STEP_SQUASH * impact - 0.02 * move_weight
-		scale_y_mul -= MOVE_STEP_SQUASH * impact + 0.012 * move_weight
-
-	sprite.rotation = lerpf(sprite.rotation, target_rot + feedback_rot_offset, clamp(delta * 10.0, 0.0, 1.0))
-	var final_scale := Vector2(
-		base_sprite_scale.x * scale_x_mul * feedback_scale_mul.x,
-		base_sprite_scale.y * scale_y_mul * feedback_scale_mul.y
-	)
-	sprite.scale = final_scale
-	sprite.position = base_sprite_position + Vector2(offset_x, offset_y)
-	_update_ground_shadow(move_weight, step_sharp)
-
-func _ensure_ground_shadow() -> void:
-	if ground_shadow or not sprite:
-		return
-	ground_shadow = Sprite2D.new()
-	ground_shadow.name = "GroundShadow"
-	ground_shadow.texture = _make_shadow_texture(96, 46, 0.36)
-	ground_shadow.centered = true
-	ground_shadow.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-	ground_shadow.modulate = Color(0.0, 0.0, 0.0, SHADOW_BASE_ALPHA)
-	ground_shadow.z_index = -1
-	add_child(ground_shadow)
-	move_child(ground_shadow, 0)
-
-func _make_shadow_texture(width: int, height: int, falloff: float) -> Texture2D:
-	var w: int = max(12, width)
-	var h: int = max(8, height)
-	var img: Image = Image.create(w, h, false, Image.FORMAT_RGBA8)
-	var cx: float = (float(w) - 1.0) * 0.5
-	var cy: float = (float(h) - 1.0) * 0.5
-	var inv_rx: float = 1.0 / max(1.0, cx)
-	var inv_ry: float = 1.0 / max(1.0, cy)
-	for y in range(h):
-		for x in range(w):
-			var dx: float = (float(x) - cx) * inv_rx
-			var dy: float = (float(y) - cy) * inv_ry
-			var d: float = sqrt(dx * dx + dy * dy)
-			var alpha: float = clamp(1.0 - smoothstep(1.0 - falloff, 1.0, d), 0.0, 1.0)
-			img.set_pixel(x, y, Color(0.0, 0.0, 0.0, alpha))
-	return ImageTexture.create_from_image(img)
-
-func _refresh_shadow_profile() -> void:
-	if not ground_shadow:
-		return
-	var radius: float = enemy_collision_radius
-	var tex_w: int = int(clamp(radius * 2.3, 54.0, 132.0))
-	var tex_h: int = int(clamp(radius * 1.05, 24.0, 66.0))
-	ground_shadow.texture = _make_shadow_texture(tex_w, tex_h, 0.36)
-	shadow_base_offset_y = clamp(radius * 0.40, 8.0, 22.0)
-	ground_shadow.position = base_sprite_position + Vector2(0.0, shadow_base_offset_y)
-	ground_shadow.scale = Vector2.ONE
-
-func _update_ground_shadow(move_weight: float, step_sharp: float) -> void:
-	if not ground_shadow:
-		return
-	var impact: float = max(0.0, -step_sharp) * move_weight
-	var target_scale := Vector2(
-		1.0 - 0.11 * move_weight + 0.11 * impact,
-		1.0 + 0.04 * move_weight
-	)
-	ground_shadow.scale = ground_shadow.scale.lerp(target_scale, 0.20)
-	var target_pos: Vector2 = base_sprite_position + Vector2(0.0, shadow_base_offset_y)
-	ground_shadow.position = ground_shadow.position.lerp(target_pos, 0.20)
-	ground_shadow.modulate.a = clamp(SHADOW_BASE_ALPHA + 0.07 * move_weight - 0.08 * impact, 0.16, 0.52)
-
-func _update_hit_feedback(delta: float) -> void:
-	feedback_scale_mul = Vector2.ONE
-	feedback_rot_offset = 0.0
-	if not sprite:
-		return
-	if hit_feedback_timer > 0.0:
-		hit_feedback_timer = max(0.0, hit_feedback_timer - delta)
-		var t: float = hit_feedback_timer / 0.13
-		var recover: float = 1.0 - t
-		sprite.modulate = Color(1.0, 0.66 + 0.34 * recover, 0.66 + 0.34 * recover, 1.0)
-		feedback_scale_mul = Vector2(1.10 - 0.10 * recover, 0.91 + 0.09 * recover)
-		feedback_rot_offset = 0.06 * (1.0 - recover)
+	if speed_ratio > 0.05:
+		## 移动：只做步态起伏，不做缩放
+		var step_wave: float = abs(sin(breathe_time))
+		var step_centered: float = (step_wave - 0.5) * 2.0
+		var step_sharp: float = sign(step_centered) * pow(abs(step_centered), MOVE_BOB_SHARPNESS)
+		sprite.scale = base_sprite_scale
+		sprite.position = base_sprite_position + Vector2(0.0, step_sharp * MOVE_BOB_OFFSET)
 	else:
-		sprite.modulate = Color.WHITE
-
-func _trigger_hit_feedback() -> void:
-	hit_feedback_timer = 0.13
-
-func _update_dynamic_z_index() -> void:
-	if not enable_dynamic_z_sort:
-		return
-	z_index = int(clamp(global_position.y * Z_SORT_SCALE, -1800.0, 1800.0)) + Z_SORT_BIAS
+		## 静止：极弱上下呼吸
+		var wave: float = sin(breathe_time)
+		sprite.scale = base_sprite_scale
+		sprite.position = base_sprite_position + Vector2(0.0, wave * BREATHE_IDLE_OFFSET)
 
 ##############################################################################
 # AI主循环
@@ -708,24 +472,10 @@ func _physics_process(delta: float) -> void:
 	if not player or not is_instance_valid(player):
 		return
 
-	_process_status_effects(delta)
-
 	if slow_timer > 0.0:
 		slow_timer -= delta
 		if slow_timer <= 0.0:
 			slow_mult = 1.0
-
-	if freeze_timer > 0.0:
-		velocity = Vector2.ZERO
-		## 冻结期间仍允许受到击退影响
-		if knockback_velocity.length() > 1.0:
-			velocity += knockback_velocity
-			knockback_velocity = knockback_velocity.lerp(Vector2.ZERO, delta * KNOCKBACK_DAMP)
-		move_and_slide()
-		_clamp_to_map_bounds()
-		if health_bar:
-			health_bar.value = current_hp
-		return
 
 	## “存活X秒后强化”逻辑
 	if "15秒" in behavior and not is_enhanced:
@@ -764,7 +514,6 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 	## 限制在地图边界内
 	_clamp_to_map_bounds()
-	_update_dynamic_z_index()
 
 	if health_bar:
 		health_bar.value = current_hp
@@ -916,42 +665,7 @@ func _create_single_projectile(direction: Vector2, splash: bool = false) -> void
 
 ## 伤害计算入口（目前返回damage）
 func _calculate_final_damage() -> float:
-	var final_damage: float = damage
-	var crit_chance: float = max(0.0, extra_crit_chance)
-	if crit_chance > 0.0 and randf() * 100.0 < crit_chance:
-		final_damage *= 1.5
-	return final_damage
-
-func _get_player_stat(stat_name: String) -> float:
-	if GameManager and GameManager.has_method("get_player_stat"):
-		return float(GameManager.get_player_stat(stat_name, 0.0))
-	if player and is_instance_valid(player) and player.has_method("get_final_stat"):
-		return float(player.get_final_stat(stat_name))
-	return 0.0
-
-func _get_player_stat_multiplier(stat_name: String, min_mult: float, max_mult: float) -> float:
-	if GameManager and GameManager.has_method("get_player_stat_multiplier"):
-		return float(GameManager.get_player_stat_multiplier(stat_name, min_mult, max_mult))
-	var value_pct: float = _get_player_stat(stat_name)
-	return clamp(1.0 + value_pct / 100.0, min_mult, max_mult)
-
-## 由EnemySpawner注入出生难度修正
-func set_spawn_difficulty(hp_mult: float, speed_mult: float, crit_bonus: float) -> void:
-	spawn_hp_mult = max(0.1, hp_mult)
-	spawn_speed_mult = max(0.1, speed_mult)
-	spawn_crit_bonus = crit_bonus
-	_apply_spawn_difficulty_if_ready()
-
-func _apply_spawn_difficulty_if_ready() -> void:
-	if spawn_difficulty_applied:
-		return
-	if max_hp <= 0.0:
-		return
-	max_hp = max(1.0, max_hp * spawn_hp_mult)
-	current_hp = max_hp
-	speed = max(10.0, speed * spawn_speed_mult)
-	extra_crit_chance += spawn_crit_bonus
-	spawn_difficulty_applied = true
+	return damage
 
 ##############################################################################
 # 退避与强化
@@ -985,226 +699,26 @@ func _on_hurt_box_area_entered(area: Area2D) -> void:
 		return
 
 ## 受伤计算（护甲减伤）
-func take_damage(dmg: float, allow_lifesteal: bool = true) -> void:
-	if is_in_group("boss"):
-		var boss_dmg_mult: float = _get_player_stat_multiplier("BossDamage", 0.0, 5.0)
-		dmg *= boss_dmg_mult
-	if mark_timer > 0.0:
-		dmg *= MARK_DAMAGE_MULT
+func take_damage(dmg: float) -> void:
 	var dr: float = armor / (armor + 60.0)
 	var actual_damage: float = dmg * (1.0 - dr)
 	current_hp -= actual_damage
-	_show_health_bar()
-	_spawn_damage_float(actual_damage)
-	_trigger_hit_feedback()
-	_apply_damage_knockback(actual_damage)
-	_spawn_hit_impact_vfx(actual_damage)
-	_notify_player_attack_landed(actual_damage)
-	if allow_lifesteal:
-		_apply_player_lifesteal(actual_damage)
 	if current_hp <= 0:
 		die()
 
-func _apply_player_lifesteal(actual_damage: float) -> void:
-	if actual_damage <= 0.0:
-		return
-	var lifesteal_pct: float = _get_player_stat("Lifesteal")
-	if lifesteal_pct <= 0.0:
-		return
-	var heal_amount: float = actual_damage * lifesteal_pct / 100.0
-	var player_node: Node = null
-	if GameManager and GameManager.player and is_instance_valid(GameManager.player):
-		player_node = GameManager.player
-	elif player and is_instance_valid(player):
-		player_node = player
-	if player_node and player_node.has_method("heal"):
-		player_node.heal(heal_amount)
-
 ## 死亡处理（掉落金币/经验/矿石）
 func die() -> void:
-	var minute: int = 0
-	if GameManager and GameManager.has_method("get_current_minute"):
-		minute = int(GameManager.get_current_minute())
-
-	var base_gold: float = float(monster_data.get("Money", 1))
-	var gold_stage_mult: float = 1.0
-	var ore_base_chance: float = 0.07
-	if has_node("/root/SpawnerConfig"):
-		var config: Node = get_node("/root/SpawnerConfig")
-		if config.has_method("get_enemy_gold_stage_mult"):
-			gold_stage_mult = float(config.call("get_enemy_gold_stage_mult", minute))
-		if config.has_method("get_enemy_ore_drop_base_chance"):
-			ore_base_chance = float(config.call("get_enemy_ore_drop_base_chance", minute))
-
-	var drop_rate_mult: float = _get_player_stat_multiplier("EnemyMaterialDropRate", 0.2, 5.0)
-	var gold: int = max(1, int(round(base_gold * gold_stage_mult * drop_rate_mult)))
+	var gold: int = int(monster_data.get("Money", 1))
 	var exp_amount: int = 3
 	_spawn_pickup("gold_exp", gold, exp_amount, 0)
 	# 保持少量概率矿石掉落（主来源仍是矿点）
 	var ore_drop: int = 0
-	var ore_drop_chance: float = clamp(ore_base_chance * drop_rate_mult, 0.0, 1.0)
-	if randf() < ore_drop_chance:
+	if randf() < 0.10:
 		ore_drop = 1
 		_spawn_pickup("ore", 0, 0, ore_drop)
 	print("[Enemy] 死亡: ", monster_data.get("NameZH", monster_id), " drop gold=", gold, " exp=", exp_amount, " ore=", ore_drop)
-	_spawn_death_burst_vfx()
 	_spawn_death_effect()
 	queue_free()
-
-func _notify_player_attack_landed(actual_damage: float) -> void:
-	if actual_damage <= 0.0:
-		return
-	var player_node: Node = null
-	if GameManager and GameManager.player and is_instance_valid(GameManager.player):
-		player_node = GameManager.player
-	elif player and is_instance_valid(player):
-		player_node = player
-	if player_node and player_node.has_method("notify_attack_landed"):
-		player_node.notify_attack_landed(actual_damage, global_position)
-
-func _apply_damage_knockback(actual_damage: float) -> void:
-	if actual_damage <= 0.0:
-		return
-	var attacker: Node2D = null
-	if GameManager and GameManager.player and is_instance_valid(GameManager.player):
-		attacker = GameManager.player
-	elif player and is_instance_valid(player):
-		attacker = player
-	var direction: Vector2 = Vector2.ZERO
-	if attacker:
-		direction = (global_position - attacker.global_position).normalized()
-	if direction == Vector2.ZERO:
-		direction = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)).normalized()
-	var strength: float = clamp(18.0 + actual_damage * 1.4, 18.0, 120.0)
-	apply_knockback(direction, strength)
-
-func _spawn_hit_impact_vfx(actual_damage: float) -> void:
-	if hit_impact_cooldown_left > 0.0:
-		return
-	var scale: float = clamp(0.16 + actual_damage / 200.0, 0.16, 0.34)
-	_spawn_world_impact_vfx(
-		HIT_IMPACT_VFX_PATH,
-		global_position + Vector2(randf_range(-6.0, 6.0), randf_range(-8.0, -2.0)),
-		scale,
-		0.16,
-		Color(1.0, 0.95, 0.90, 0.95)
-	)
-	hit_impact_cooldown_left = HIT_IMPACT_COOLDOWN
-
-func _spawn_death_burst_vfx() -> void:
-	_spawn_world_impact_vfx(
-		DEATH_BURST_VFX_PATH,
-		global_position,
-		clamp(enemy_collision_radius / 150.0 + 0.25, 0.30, 0.66),
-		0.24,
-		Color(1.0, 0.92, 0.82, 0.92)
-	)
-
-func _spawn_world_impact_vfx(
-	texture_path: String,
-	spawn_pos: Vector2,
-	base_scale: float,
-	duration: float,
-	tint: Color
-) -> void:
-	if not ResourceLoader.exists(texture_path):
-		return
-	var parent_node: Node = get_tree().current_scene
-	if not parent_node:
-		parent_node = get_parent()
-	if not parent_node:
-		return
-	var vfx_root: Node2D = Node2D.new()
-	var vfx_sprite: Sprite2D = Sprite2D.new()
-	vfx_sprite.texture = load(texture_path)
-	vfx_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	vfx_sprite.modulate = tint
-	vfx_sprite.scale = Vector2.ONE * base_scale
-	vfx_root.add_child(vfx_sprite)
-	parent_node.add_child(vfx_root)
-	vfx_root.global_position = spawn_pos
-	var tween: Tween = vfx_root.create_tween()
-	tween.tween_property(vfx_sprite, "scale", vfx_sprite.scale * 1.55, duration)
-	tween.parallel().tween_property(vfx_sprite, "modulate:a", 0.0, duration)
-	tween.tween_callback(vfx_root.queue_free)
-
-func _show_health_bar() -> void:
-	if not health_bar:
-		return
-	health_bar_show_timer = HEALTH_BAR_SHOW_DURATION
-	health_bar.visible = true
-
-func _update_health_bar_visibility(delta: float) -> void:
-	if not health_bar:
-		return
-	if health_bar_show_timer > 0.0:
-		health_bar_show_timer = max(0.0, health_bar_show_timer - delta)
-		health_bar.modulate.a = lerpf(health_bar.modulate.a, 1.0, clamp(delta * HEALTH_BAR_FADE_SPEED, 0.0, 1.0))
-		health_bar.visible = true
-	else:
-		health_bar.modulate.a = lerpf(health_bar.modulate.a, 0.0, clamp(delta * HEALTH_BAR_FADE_SPEED, 0.0, 1.0))
-		if health_bar.modulate.a <= 0.02:
-			health_bar.visible = false
-
-func _apply_health_bar_style() -> void:
-	if not health_bar:
-		return
-	var bg_style := StyleBoxFlat.new()
-	bg_style.bg_color = Color(0.05, 0.06, 0.08, 0.90)
-	bg_style.corner_radius_top_left = 3
-	bg_style.corner_radius_top_right = 3
-	bg_style.corner_radius_bottom_left = 3
-	bg_style.corner_radius_bottom_right = 3
-	bg_style.set_border_width_all(1)
-	bg_style.border_color = Color(0.20, 0.24, 0.28, 0.95)
-	var fill_style := StyleBoxFlat.new()
-	fill_style.bg_color = Color(0.94, 0.28, 0.20, 1.0)
-	fill_style.corner_radius_top_left = 3
-	fill_style.corner_radius_top_right = 3
-	fill_style.corner_radius_bottom_left = 3
-	fill_style.corner_radius_bottom_right = 3
-	health_bar.add_theme_stylebox_override("background", bg_style)
-	health_bar.add_theme_stylebox_override("fill", fill_style)
-	health_bar.show_percentage = false
-
-func _spawn_damage_float(actual_damage: float) -> void:
-	if actual_damage <= 0.0:
-		return
-	var parent_node: Node = get_tree().current_scene
-	if not parent_node:
-		parent_node = get_parent()
-	if not parent_node:
-		return
-	var float_root: Node2D = Node2D.new()
-	float_root.global_position = global_position + Vector2(randf_range(-8.0, 8.0), randf_range(-20.0, -8.0))
-	parent_node.add_child(float_root)
-	var label: Label = Label.new()
-	label.text = str(int(round(actual_damage)))
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	var label_settings := LabelSettings.new()
-	label_settings.font_size = int(clamp(16.0 + sqrt(actual_damage) * 0.85, 16.0, 28.0))
-	label_settings.outline_size = 3
-	label_settings.outline_color = Color(0.0, 0.0, 0.0, 0.82)
-	var high_damage: bool = actual_damage >= max(16.0, max_hp * 0.15)
-	label_settings.font_color = Color(1.0, 0.78, 0.42, 1.0) if high_damage else Color(1.0, 0.92, 0.74, 1.0)
-	label.label_settings = label_settings
-	label.position = Vector2(-32.0, -14.0)
-	label.size = Vector2(64.0, 24.0)
-	label.scale = Vector2.ONE * (0.82 if high_damage else 0.76)
-	float_root.add_child(label)
-	var drift_x: float = randf_range(-14.0, 14.0)
-	var tween: Tween = float_root.create_tween()
-	tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	tween.tween_property(
-		float_root,
-		"global_position",
-		float_root.global_position + Vector2(drift_x, -DAMAGE_FLOAT_UPWARD),
-		DAMAGE_FLOAT_DURATION
-	)
-	tween.parallel().tween_property(label, "scale", Vector2.ONE, 0.10)
-	tween.parallel().tween_property(label, "modulate:a", 0.0, DAMAGE_FLOAT_DURATION)
-	tween.tween_callback(float_root.queue_free)
 
 ## 生成拾取物（金币/经验/矿石）
 func _spawn_pickup(pickup_type: String, gold: int, exp_amount: int, ore_amount: int) -> void:
@@ -1218,16 +732,11 @@ func _spawn_pickup(pickup_type: String, gold: int, exp_amount: int, ore_amount: 
 		"type": pickup_type,
 		"gold": gold,
 		"exp": exp_amount,
-		"ore": ore_amount,
-		"source": "enemy"
+		"ore": ore_amount
 	}
-	var parent_node: Node = get_tree().current_scene
-	if not parent_node:
-		parent_node = get_parent()
-	if parent_node:
-		parent_node.add_child(pickup)
 	if pickup.has_method("initialize"):
-		pickup.call_deferred("initialize", config)
+		pickup.initialize(config)
+	get_parent().add_child(pickup)
 
 ## 死亡特效/召唤（由remake文本决定）
 func _spawn_death_effect() -> void:
@@ -1329,50 +838,9 @@ func _apply_spawn_hp_mult(hp_mult: float) -> void:
 # 状态效果
 ##############################################################################
 
-func _process_status_effects(delta: float) -> void:
-	if burn_timer > 0.0:
-		burn_timer -= delta
-		burn_tick_timer -= delta
-		if burn_tick_timer <= 0.0:
-			_apply_burn_tick()
-			burn_tick_timer = 0.5
-		if burn_timer <= 0.0:
-			burn_tick_damage = 0.0
-
-	if freeze_timer > 0.0:
-		freeze_timer -= delta
-		if freeze_timer < 0.0:
-			freeze_timer = 0.0
-
-	if mark_timer > 0.0:
-		mark_timer -= delta
-		if mark_timer < 0.0:
-			mark_timer = 0.0
-
-func _apply_burn_tick() -> void:
-	if burn_tick_damage <= 0.0:
-		return
-	current_hp -= burn_tick_damage
-	_show_health_bar()
-	if current_hp <= 0.0:
-		die()
-
 func apply_slow(duration: float, mult: float) -> void:
 	slow_timer = max(slow_timer, duration)
 	slow_mult = min(slow_mult, mult)
 
 func apply_knockback(direction: Vector2, strength: float) -> void:
 	knockback_velocity = direction.normalized() * strength
-
-func apply_burn(source_damage: float = 0.0) -> void:
-	var duration: float = 3.0
-	var dot: float = max(1.0, source_damage * 0.15, max_hp * 0.01)
-	burn_tick_damage = max(burn_tick_damage, dot)
-	burn_timer = max(burn_timer, duration)
-	burn_tick_timer = min(burn_tick_timer, 0.2) if burn_tick_timer > 0.0 else 0.2
-
-func apply_freeze(duration: float = 1.0) -> void:
-	freeze_timer = max(freeze_timer, duration)
-
-func apply_mark(duration: float = 5.0) -> void:
-	mark_timer = max(mark_timer, duration)

@@ -17,8 +17,8 @@ extends Node
 ## 单位：个
 ## 作用：控制商店界面展示的商品数量
 ## 调整范围：4-8
-## 当前值：6
-const SHOP_SLOT_COUNT: int = 6
+## 当前值：4
+const SHOP_SLOT_COUNT: int = 4
 
 ## 商店刷新基础价格
 ## 单位：金币
@@ -33,6 +33,21 @@ const REFRESH_BASE_PRICE: int = 10
 ## 调整范围：3-10
 ## 当前值：5
 const REFRESH_PRICE_STEP: int = 5
+
+## 商店刷新时间阶梯（秒）
+## 作用：随时间增加刷新成本
+const REFRESH_TIME_STEP_SECONDS: float = 180.0
+const REFRESH_TIME_STEP_PRICE: int = 5
+const REFRESH_TIME_STEP_MAX: int = 30
+
+## P1.1 经济曲线：商店价格阶段倍率（前期折扣，后期回收）
+## key=起始分钟
+const PRICE_STAGE_MULT: Dictionary = {
+	0: 0.82,
+	5: 0.93,
+	10: 1.08,
+	15: 1.12
+}
 
 ## 每5分钟为一个刷新权重阶段（300秒）
 ## 单位：秒
@@ -55,20 +70,23 @@ const CARD_RARITIES: Array[String] = ["white", "blue", "purple", "gold"]
 ## 说明：高品质卡出现几率略增
 ## 数值越大越常见
 const CARD_RARITY_WEIGHTS_BY_STAGE: Array[Dictionary] = [
-	{"white": 70.0, "blue": 25.0, "purple": 5.0, "gold": 0.0},   # 0-5min
+	{"white": 72.0, "blue": 24.0, "purple": 4.0, "gold": 0.0},   # 0-5min
 	{"white": 55.0, "blue": 30.0, "purple": 15.0, "gold": 0.0},  # 5-10min
-	{"white": 45.0, "blue": 35.0, "purple": 20.0, "gold": 0.0},  # 10-15min
-	{"white": 35.0, "blue": 40.0, "purple": 24.0, "gold": 1.0}   # 15-20min
+	{"white": 40.0, "blue": 34.0, "purple": 24.0, "gold": 2.0},  # 10-15min
+	{"white": 28.0, "blue": 35.0, "purple": 30.0, "gold": 7.0}   # 15-20min
 ]
 
 ## 武器品质权重（每5分钟一档）
 ## 说明：随时间略提升蓝/紫概率，但不出现金色
 const WEAPON_QUALITY_WEIGHTS_BY_STAGE: Array[Dictionary] = [
-	{"white": 70.0, "blue": 25.0, "purple": 5.0},
-	{"white": 55.0, "blue": 30.0, "purple": 15.0},
-	{"white": 45.0, "blue": 35.0, "purple": 20.0},
-	{"white": 35.0, "blue": 40.0, "purple": 25.0}
+	{"white": 74.0, "blue": 22.0, "purple": 4.0},
+	{"white": 58.0, "blue": 29.0, "purple": 13.0},
+	{"white": 45.0, "blue": 34.0, "purple": 21.0},
+	{"white": 31.0, "blue": 41.0, "purple": 28.0}
 ]
+
+## 15分钟后开始强制给1个“补短板”卡位
+const PATCH_CARD_STAGE_MINUTE: int = 15
 
 ##############################################################################
 # 运行期状态
@@ -109,8 +127,15 @@ func _ready() -> void:
 func generate_shop_offers() -> Array:
 	var offers: Array = []
 	var weapon_ratio: float = _get_weapon_offer_ratio()
+	var minute: int = int(GameManager.current_time / 60.0)
+	var patch_slot: int = -1
+	if minute >= PATCH_CARD_STAGE_MINUTE:
+		patch_slot = rng.randi_range(0, SHOP_SLOT_COUNT - 1)
 
 	for i in range(SHOP_SLOT_COUNT):
+		if i == patch_slot:
+			offers.append(_generate_patch_card_offer())
+			continue
 		if rng.randf() < weapon_ratio:
 			offers.append(_generate_weapon_offer())
 		else:
@@ -126,14 +151,20 @@ func generate_shop_offers() -> Array:
 func reset_refresh_count() -> void:
 	refresh_count = 0
 
+## 重置整局商店状态（新开局调用）
+func reset_run_state() -> void:
+	refresh_count = 0
+	card_purchase_counts.clear()
+
 ## 获取刷新价格
 ## 获取当前刷新价格
 ##
 ## 参数：无
 ## 返回：刷新价格（金币）
 func get_refresh_price() -> int:
-	var base_price: int = REFRESH_BASE_PRICE + refresh_count * REFRESH_PRICE_STEP
-	return base_price
+	var time_mult: int = _get_refresh_time_mult()
+	var base_price: int = REFRESH_BASE_PRICE + refresh_count * REFRESH_PRICE_STEP + time_mult
+	return _apply_price_modifier(base_price)
 
 ## 增加刷新计数
 ## 增加刷新次数
@@ -142,6 +173,37 @@ func get_refresh_price() -> int:
 ## 返回：无
 func increase_refresh_count() -> void:
 	refresh_count += 1
+
+## 计算已有商品条目的当前价格（用于购买后动态重算）
+##
+## 参数：
+##   offer - 商店条目字典
+## 返回：
+##   当前应显示/应扣除的价格
+func get_offer_price(offer: Dictionary) -> int:
+	var item_type: String = String(offer.get("type", ""))
+	if item_type == "weapon":
+		var quality: String = String(offer.get("quality", "white"))
+		var weapon_data: Dictionary = offer.get("data", {})
+		if weapon_data.is_empty():
+			var weapon_id: String = String(offer.get("weapon_id", ""))
+			weapon_data = GameData.get_weapon(weapon_id)
+		if weapon_data.is_empty():
+			return max(int(offer.get("price", 1)), 1)
+		var base_price: int = _get_weapon_price_by_quality(weapon_data, quality)
+		return _apply_price_modifier(base_price)
+
+	if item_type == "card":
+		var card_data: Dictionary = offer.get("data", {})
+		if card_data.is_empty():
+			var card_id: String = String(offer.get("card_id", ""))
+			card_data = GameData.get_shop_card(card_id)
+		if card_data.is_empty():
+			return max(int(offer.get("price", 1)), 1)
+		var base_price: int = int(card_data.get("price", 0))
+		return _apply_price_modifier(base_price)
+
+	return max(int(offer.get("price", 1)), 1)
 
 ##############################################################################
 # 对外接口：卡牌购买限制
@@ -338,6 +400,21 @@ func _generate_card_offer() -> Dictionary:
 		"data": card
 	}
 
+## 15分钟后的补短板卡位
+func _generate_patch_card_offer() -> Dictionary:
+	var card: Dictionary = _pick_shop_card_for_patch()
+	if card.is_empty():
+		return _generate_card_offer()
+	var price: int = int(card.get("price", 0))
+	price = _apply_price_modifier(price)
+	return {
+		"type": "card",
+		"card_id": card.get("id", ""),
+		"price": price,
+		"rarity": card.get("rarity", "white"),
+		"data": card
+	}
+
 ## 按稀有度抽取卡牌
 ##
 ## 参数：无
@@ -345,26 +422,159 @@ func _generate_card_offer() -> Dictionary:
 func _pick_shop_card_by_rarity() -> Dictionary:
 	var weights: Dictionary = _get_card_rarity_weights()
 	var target_rarity: String = _pick_weighted_key(weights, "white")
+	var candidates: Array[Dictionary] = _collect_card_candidates(target_rarity)
+	if candidates.is_empty():
+		candidates = _collect_card_candidates("")
+	if candidates.is_empty():
+		return {}
+	return candidates[rng.randi_range(0, candidates.size() - 1)]
 
+## 15分钟后：根据角色短板筛卡
+func _pick_shop_card_for_patch() -> Dictionary:
+	var weights: Dictionary = _get_card_rarity_weights()
+	var target_rarity: String = _pick_weighted_key(weights, "white")
+	var candidates: Array[Dictionary] = _collect_card_candidates(target_rarity)
+	if candidates.is_empty():
+		candidates = _collect_card_candidates("")
+	if candidates.is_empty():
+		return {}
+
+	var patch_need: Dictionary = _evaluate_patch_need()
+	var best_card: Dictionary = {}
+	var best_score: float = -999999.0
+	for card: Dictionary in candidates:
+		var score: float = _score_card_for_patch(card, patch_need)
+		if score > best_score:
+			best_score = score
+			best_card = card
+	if best_card.is_empty():
+		return candidates[rng.randi_range(0, candidates.size() - 1)]
+	return best_card
+
+func _collect_card_candidates(target_rarity: String) -> Array[Dictionary]:
 	var candidates: Array[Dictionary] = []
 	for card_id: String in GameData.shop_cards.keys():
 		var card: Dictionary = GameData.shop_cards[card_id]
-		if card.get("rarity", "") != target_rarity:
+		if not target_rarity.is_empty() and card.get("rarity", "") != target_rarity:
 			continue
 		if not can_purchase_card(card_id):
 			continue
 		candidates.append(card)
+	return candidates
 
-	if candidates.is_empty():
-		# 兜底：任意可购买卡
-		for card_id: String in GameData.shop_cards.keys():
-			if can_purchase_card(card_id):
-				candidates.append(GameData.shop_cards[card_id])
+func _evaluate_patch_need() -> Dictionary:
+	var need: Dictionary = {
+		"damage": 1.0,
+		"survival": 1.0
+	}
+	var player: CharacterBody2D = _get_player()
+	if not player or not player.has_method("get_final_stat"):
+		return need
 
-	if candidates.is_empty():
-		return {}
+	var health: float = float(player.get_final_stat("Health"))
+	var armor: float = float(player.get_final_stat("Armor"))
+	var dodge: float = float(player.get_final_stat("Dodge"))
+	var regen: float = float(player.get_final_stat("HealthRegen"))
+	var lifesteal: float = float(player.get_final_stat("Lifesteal"))
+	var melee: float = float(player.get_final_stat("MeleeDamage"))
+	var ranged: float = float(player.get_final_stat("RangedDamage"))
+	var elemental: float = float(player.get_final_stat("ElementalDamage"))
+	var summon: float = float(player.get_final_stat("SummonDamage"))
+	var all_dmg: float = float(player.get_final_stat("AllDamage"))
+	var crit_rate: float = float(player.get_final_stat("CritRate"))
 
-	return candidates[rng.randi_range(0, candidates.size() - 1)]
+	var offense_score: float = max(melee, max(ranged, max(elemental, summon))) + all_dmg * 0.8 + crit_rate * 0.3
+	var survival_score: float = health * 0.28 + armor * 2.4 + dodge * 1.8 + regen * 4.0 + lifesteal * 4.5
+
+	if offense_score < 58.0:
+		need["damage"] = 1.35
+	elif offense_score < 82.0:
+		need["damage"] = 1.15
+	else:
+		need["damage"] = 0.85
+
+	if survival_score < 95.0:
+		need["survival"] = 1.45
+	elif survival_score < 140.0:
+		need["survival"] = 1.20
+	else:
+		need["survival"] = 0.85
+
+	if GameManager.current_time >= 900.0:
+		need["survival"] = float(need["survival"]) + 0.15
+	return need
+
+func _score_card_for_patch(card: Dictionary, patch_need: Dictionary) -> float:
+	var effects: Array = card.get("effects", [])
+	var damage_score: float = 0.0
+	var survival_score: float = 0.0
+	var penalty: float = 0.0
+	for effect: Dictionary in effects:
+		var stat: String = String(effect.get("stat", ""))
+		var value: float = float(effect.get("value", 0.0))
+		if _is_damage_effect_stat(stat):
+			if value >= 0.0:
+				damage_score += value
+			else:
+				penalty += abs(value) * 0.60
+		if _is_survival_effect_stat(stat):
+			if value >= 0.0:
+				survival_score += value
+			else:
+				penalty += abs(value) * 0.70
+		match stat:
+			"EnemyCount", "EnemyHealth", "EnemySpeed", "EnemyCritChance":
+				if value > 0.0:
+					penalty += value
+				else:
+					survival_score += abs(value) * 0.5
+			"ItemPrice":
+				if value < 0.0:
+					survival_score += abs(value) * 0.5
+				else:
+					penalty += value * 0.2
+			"MaterialRespawnCooldown":
+				if value > 0.0:
+					survival_score += value * 0.2
+			"DoubleMaterialChance":
+				if value > 0.0:
+					survival_score += value * 0.2
+
+	var rarity_bonus: float = 0.0
+	match String(card.get("rarity", "white")):
+		"blue":
+			rarity_bonus = 2.0
+		"purple":
+			rarity_bonus = 5.0
+		"gold":
+			rarity_bonus = 9.0
+
+	return damage_score * float(patch_need.get("damage", 1.0)) + survival_score * float(patch_need.get("survival", 1.0)) + rarity_bonus - penalty
+
+func _is_damage_effect_stat(stat: String) -> bool:
+	return stat in [
+		"AllDamage",
+		"MeleeDamage",
+		"RangedDamage",
+		"ElementalDamage",
+		"SummonDamage",
+		"CritRate",
+		"CritDamage",
+		"Cooldown",
+		"BossDamage",
+		"ExplosionDamage",
+		"PenetrationDamage"
+	]
+
+func _is_survival_effect_stat(stat: String) -> bool:
+	return stat in [
+		"Health",
+		"HealthRegen",
+		"Armor",
+		"Dodge",
+		"Lifesteal",
+		"MoveSpeed"
+	]
 
 ## 获取当前阶段卡牌稀有度权重
 ##
@@ -391,9 +601,62 @@ func _get_weight_stage_index() -> int:
 ## 参数：无
 ## 返回：0-1比例
 func _get_weapon_offer_ratio() -> float:
-	# 0-5分钟：武器 30%，卡牌 70%
-	# 5分钟后：武器 15%，卡牌 85%
-	return 0.3 if GameManager.current_time < 300.0 else 0.15
+	var time_sec: float = GameManager.current_time
+	var player: CharacterBody2D = _get_player()
+	if player:
+		var equipped_weapons: int = _get_equipped_weapon_count(player)
+		# 0-5分钟：优先凑6把武器，确保5分钟Boss是“输出坎”
+		if time_sec < 300.0:
+			if equipped_weapons <= 1:
+				return 0.95
+			if equipped_weapons <= 3:
+				return 0.88
+			if equipped_weapons <= 5:
+				return 0.76
+			return 0.52
+		# 5-10分钟：继续补齐武器，但开始让位给卡牌构筑
+		if time_sec < 600.0:
+			if equipped_weapons <= 3:
+				return 0.78
+			if equipped_weapons <= 5:
+				return 0.64
+			return 0.40
+		# 10分钟后：更多给卡牌/补短板
+		if equipped_weapons <= 3:
+			return 0.66
+		if equipped_weapons <= 5:
+			return 0.52
+	return 0.36 if time_sec < 900.0 else 0.26
+
+func _get_equipped_weapon_count(player: CharacterBody2D) -> int:
+	var slots: Variant = player.get("weapon_slots")
+	if typeof(slots) != TYPE_ARRAY:
+		return 0
+	var count: int = 0
+	for item: Variant in slots:
+		if typeof(item) != TYPE_DICTIONARY:
+			continue
+		var weapon_data: Dictionary = item
+		if not weapon_data.is_empty():
+			count += 1
+	return count
+
+## 获取刷新价格的时间附加项
+func _get_refresh_time_mult() -> int:
+	var time_sec: float = GameManager.current_time
+	var stage: int = int(time_sec / REFRESH_TIME_STEP_SECONDS)
+	return min(stage * REFRESH_TIME_STEP_PRICE, REFRESH_TIME_STEP_MAX)
+
+## 获取商店价格阶段倍率
+func _get_price_stage_mult() -> float:
+	var minute: int = int(GameManager.current_time / 60.0)
+	if minute >= 15:
+		return float(PRICE_STAGE_MULT[15])
+	if minute >= 10:
+		return float(PRICE_STAGE_MULT[10])
+	if minute >= 5:
+		return float(PRICE_STAGE_MULT[5])
+	return float(PRICE_STAGE_MULT[0])
 
 ##############################################################################
 # 价格与权重辅助
@@ -405,12 +668,13 @@ func _get_weapon_offer_ratio() -> float:
 ##   base_price - 基础价格
 ## 返回：修正后价格
 func _apply_price_modifier(base_price: int) -> int:
+	var staged_price: int = int(round(float(base_price) * _get_price_stage_mult()))
 	var player: CharacterBody2D = _get_player()
 	if not player:
-		return base_price
+		return max(staged_price, 1)
 	var item_price_pct: float = player.get_final_stat("ItemPrice")
 	var price_mult: float = 1.0 + item_price_pct / 100.0
-	var price: int = int(round(base_price * price_mult))
+	var price: int = int(round(float(staged_price) * price_mult))
 	return max(price, 1)
 
 ## 按权重抽取键

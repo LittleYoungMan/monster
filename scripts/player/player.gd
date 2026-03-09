@@ -35,8 +35,31 @@ var equipment_bonus: Dictionary = {}
 var shop_bonus: Dictionary = {}
 ## Spec 加成倍率（解析 Spec 文本后得到）
 var spec_multipliers: Dictionary = {}
+## Spec 直接加值（如“近战伤害+30”）
+var spec_flat_bonus: Dictionary = {}
+## Spec 特殊规则参数（闪避回血/移速换伤害等）
+var spec_special_rules: Dictionary = {}
+## Spec 周期姿态加值（动态切换）
+var spec_cycle_bonus: Dictionary = {}
+## Spec 周期姿态计时器
+var spec_cycle_timer: float = 0.0
 ## 当前生命值
 var current_hp: float = 0.0
+## 死亡状态标记（防止重复触发死亡流程）
+var is_dead: bool = false
+## 生存统计：累计承伤
+var total_damage_taken: float = 0.0
+## 生存统计：被命中次数
+var total_hits_taken: int = 0
+## 生存统计：闪避次数
+var total_dodge_count: int = 0
+## 生存统计：闪避触发回血总量
+var total_dodge_heal: float = 0.0
+## 受击无敌帧（防止同帧连吃多段伤害）
+const DAMAGE_IFRAME_DURATION: float = 0.45
+## 单次受击上限（按最大生命比例封顶，避免超高峰值直接秒杀）
+const DAMAGE_CAP_MAX_HP_RATIO: float = 0.35
+var damage_iframe_timer: float = 0.0
 ## 当前经验值（本地存储，GameManager 也持有一份）—未使用，如需经验体系再启用
 # var current_exp: float = 0.0
 
@@ -49,6 +72,11 @@ var weapon_slots: Array[Dictionary] = []
 
 ## 最大武器槽数量；策划改上限时仅需调整该常量
 const MAX_WEAPON_SLOTS: int = 6
+
+## 拾取范围基础值（最终范围=基础值+PickupRange词条）
+const PICKUP_RANGE_BASE: float = 96.0
+const PICKUP_RANGE_MIN: float = 56.0
+const PICKUP_RANGE_MAX: float = 1400.0
 
 ## 预加载的武器场景缓存（melee/ranged/element/summon），避免战斗中反复加载
 var weapon_scenes: Dictionary = {}
@@ -70,6 +98,19 @@ var weapon_orbit_center_offset: Vector2 = Vector2.ZERO
 
 ## 环绕调试打印标记（仅打印一次防止刷屏）
 var weapon_orbit_debug_printed: bool = false
+
+## 工坊词条类型到角色属性名映射
+## 说明：工坊使用短名（crit_rate/cdr等），战斗侧统一使用角色属性名
+const EQUIP_ATTR_TO_STAT: Dictionary = {
+	"crit_rate": "CritRate",
+	"crit_dmg": "CritDamage",
+	"cdr": "Cooldown",
+	"all_dmg": "AllDamage",
+	"melee_dmg": "MeleeDamage",
+	"ranged_dmg": "RangedDamage",
+	"element_dmg": "ElementalDamage",
+	"summon_dmg": "SummonDamage"
+}
 
 func _refresh_weapon_orbit_center_offset() -> void:
 	# 以碰撞体中心为基准计算环绕中心，抵消父节点缩放/位移造成的偏移
@@ -93,6 +134,13 @@ func _refresh_weapon_orbit_center_offset() -> void:
 ## 跟随摄像机
 @onready var camera: Camera2D = $Camera2D
 
+## 视觉表现开关：关闭后回退到基础动画（用于A/B测试）
+@export var enable_visual_liveliness: bool = true
+## 动态深度排序开关：按Y轴更新z_index，减少“贴纸叠层感”
+@export var enable_dynamic_z_sort: bool = true
+## 相机微动态开关：增强移动临场感
+@export var enable_camera_liveliness: bool = true
+
 ##############################################################################
 # 呼吸/步态动画参数
 ##############################################################################
@@ -104,16 +152,33 @@ var breathe_time: float = 0.0
 const BREATHE_IDLE_SPEED: float = 1.1
 
 ## 移动步态频率（Hz），行走时的起伏节奏；范围建议 1.0-4.0
-const BREATHE_MOVE_SPEED: float = 3.2
+const BREATHE_MOVE_SPEED: float = 3.4
 
 ## 静止呼吸的上下偏移幅度（像素）
 const BREATHE_IDLE_OFFSET: float = 0.6
 
 ## 移动步态的上下摆幅（像素）
-const MOVE_BOB_OFFSET: float = 1.4
+const MOVE_BOB_OFFSET: float = 1.9
 
 ## 移动步态波形锐度（0=正弦，2=方波），影响脚步的“跳跃感”
 const MOVE_BOB_SHARPNESS: float = 1.4
+## 呼吸/步态切换平滑速度（越大越快）
+const BREATHE_BLEND_SPEED: float = 8.0
+## 移动时左右轻微偏移（像素）
+const MOVE_SWAY_X_OFFSET: float = 1.35
+## 移动时左右倾斜（弧度）
+const MOVE_TILT_MAX: float = 0.08
+## 脚步落点时的轻微挤压幅度
+const MOVE_STEP_SQUASH: float = 0.055
+## 静止呼吸的轻微形变幅度
+const IDLE_SQUASH: float = 0.022
+## 地面阴影透明度基线
+const SHADOW_BASE_ALPHA: float = 0.40
+## 角色全局色调（与地图/怪物统一）
+const PLAYER_WORLD_TINT: Color = Color(0.95, 0.98, 1.0, 1.0)
+## 动态深度排序参数
+const Z_SORT_SCALE: float = 0.10
+const Z_SORT_BIAS: int = 120
 
 ## 精灵初始缩放（用于动画结束还原）
 var base_sprite_scale: Vector2 = Vector2.ONE
@@ -121,6 +186,25 @@ var base_sprite_scale: Vector2 = Vector2.ONE
 var base_sprite_position: Vector2 = Vector2.ZERO
 ## 呼吸动画是否已完成初始化
 var breathe_initialized: bool = false
+## 运行期呼吸参数（按体型/移速自动校准）
+var breathe_idle_speed_runtime: float = BREATHE_IDLE_SPEED
+var breathe_move_speed_runtime: float = BREATHE_MOVE_SPEED
+var breathe_idle_offset_runtime: float = BREATHE_IDLE_OFFSET
+var move_bob_offset_runtime: float = MOVE_BOB_OFFSET
+var breathe_motion_ratio: float = 0.0
+## 视觉反馈（受击/闪避）状态
+var feedback_scale_mul: Vector2 = Vector2.ONE
+var damage_feedback_timer: float = 0.0
+var dodge_feedback_timer: float = 0.0
+## 相机微动态
+var camera_sway_time: float = 0.0
+## 命中确认相机脉冲（玩家打中目标时触发）
+var hit_confirm_timer: float = 0.0
+var hit_confirm_strength: float = 0.0
+var hit_confirm_dir: Vector2 = Vector2.ZERO
+## 地面阴影
+var ground_shadow: Sprite2D = null
+var shadow_base_offset_y: float = 14.0
 
 ##############################################################################
 # 初始化
@@ -145,6 +229,8 @@ func _ready() -> void:
 
 	# 自动校准精灵与碰撞体中心差值，避免环绕偏移
 	_refresh_weapon_orbit_center_offset()
+	_ensure_ground_shadow()
+	_update_dynamic_z_index()
 
 	## 受击事件监听：投射物/敌人体积触碰
 	hurt_box.area_entered.connect(_on_hurt_box_area_entered)
@@ -167,8 +253,29 @@ func _ready() -> void:
 		GameManager.level_up.connect(_on_level_up)
 
 func _process(delta: float) -> void:
+	if damage_iframe_timer > 0.0:
+		damage_iframe_timer = max(0.0, damage_iframe_timer - delta)
+	_update_visual_feedback(delta)
+	_update_spec_cycle(delta)
 	## 每帧更新呼吸/步态动画，独立于物理帧
 	_update_breathe(delta)
+	_update_camera_liveliness(delta)
+	_apply_health_regen(delta)
+
+## 生命回复（每秒）
+## 说明：支持负生命回复（持续掉血），用于词条/卡牌负面效果
+func _apply_health_regen(delta: float) -> void:
+	if is_dead:
+		return
+	var regen_per_sec: float = get_final_stat("HealthRegen")
+	if absf(regen_per_sec) < 0.001:
+		return
+	var max_hp: float = get_final_stat("Health")
+	if max_hp <= 0.0:
+		return
+	current_hp = clamp(current_hp + regen_per_sec * delta, 0.0, max_hp)
+	if current_hp <= 0.0:
+		die()
 
 ##############################################################################
 # 角色数据加载
@@ -183,8 +290,14 @@ func load_character_data(char_id: String) -> void:
 		return
 
 	calculate_base_stats(current_level)
-	current_hp = get_final_stat("Health")
 	parse_character_spec()
+	current_hp = get_final_stat("Health")
+	is_dead = false
+	total_damage_taken = 0.0
+	total_hits_taken = 0
+	total_dodge_count = 0
+	total_dodge_heal = 0.0
+	damage_iframe_timer = 0.0
 	load_character_sprite()
 	equip_initial_weapon()
 
@@ -194,6 +307,12 @@ func calculate_base_stats(level: int) -> void:
 
 ## 解析角色 Spec 文本，填充 spec_multipliers 字典
 func parse_character_spec() -> void:
+	spec_multipliers.clear()
+	spec_flat_bonus.clear()
+	spec_special_rules.clear()
+	spec_cycle_bonus.clear()
+	spec_cycle_timer = 0.0
+
 	var spec_text: String = character_data.get("Spec", "")
 	if spec_text.is_empty():
 		return
@@ -204,26 +323,100 @@ func parse_character_spec() -> void:
 
 	for spec_item: Dictionary in parsed_specs:
 		var stat_name: String = spec_item.get("stat", "")
-		var multiplier: float = spec_item.get("multiplier", 1.0)
 		var operation: String = spec_item.get("operation", "none")
+		var raw_text: String = spec_item.get("raw", "")
 
-		if stat_name.is_empty():
-			var raw: String = spec_item.get("raw", "")
-			if not raw.is_empty():
-				print("[Player] 未识别的 Spec 条目: ", raw)
-			var special: String = spec_item.get("special", "")
-			if not special.is_empty():
-				print("[Player] Spec 特殊处理: ", special)
+		if operation == "special":
+			_apply_spec_special(spec_item)
 			continue
 
 		if operation == "multiply":
-			spec_multipliers[stat_name] = multiplier
-			print("[Player] Spec 倍率: ", stat_name, " x", multiplier)
+			if stat_name.is_empty():
+				if not raw_text.is_empty():
+					print("[Player] 未识别的 Spec 倍率条目: ", raw_text)
+				continue
+			var multiplier: float = spec_item.get("multiplier", 1.0)
+			var prev_mult: float = spec_multipliers.get(stat_name, 1.0)
+			spec_multipliers[stat_name] = prev_mult * multiplier
+			print("[Player] Spec 倍率: ", stat_name, " x", multiplier, " => ", spec_multipliers[stat_name])
 		elif operation == "set_zero":
+			if stat_name.is_empty():
+				if not raw_text.is_empty():
+					print("[Player] 未识别的 Spec 置零条目: ", raw_text)
+				continue
 			spec_multipliers[stat_name] = 0.0
 			print("[Player] Spec 置零: ", stat_name)
-		elif operation == "special":
-			print("[Player] Spec 特殊处理: ", stat_name, " - ", spec_item.get("special", ""))
+		elif operation == "add":
+			if stat_name.is_empty():
+				if not raw_text.is_empty():
+					print("[Player] 未识别的 Spec 加值条目: ", raw_text)
+				continue
+			var delta_value: float = spec_item.get("value", 0.0)
+			spec_flat_bonus[stat_name] = spec_flat_bonus.get(stat_name, 0.0) + delta_value
+			print("[Player] Spec 加值: ", stat_name, " ", delta_value)
+		elif operation == "none":
+			if not raw_text.is_empty():
+				print("[Player] Spec 无操作条目: ", raw_text)
+		else:
+			if not raw_text.is_empty():
+				print("[Player] Spec 未识别条目: ", raw_text)
+
+	## 周期姿态规则：解析完成后先抽一次初始姿态
+	_roll_spec_cycle_bonus()
+
+func _apply_spec_special(spec_item: Dictionary) -> void:
+	var special: String = spec_item.get("special", "")
+	if special.is_empty():
+		return
+
+	match special:
+		"dodge_heal_on_dodge":
+			spec_special_rules["dodge_heal_enabled"] = true
+			spec_special_rules["dodge_heal_chance"] = float(spec_item.get("chance", 10.0))
+			spec_special_rules["dodge_heal_amount"] = float(spec_item.get("heal", 1.0))
+			print("[Player] Spec 特殊: 闪避回血 chance=", spec_special_rules["dodge_heal_chance"], " heal=", spec_special_rules["dodge_heal_amount"])
+		"speed_to_damage":
+			spec_special_rules["speed_to_damage_enabled"] = true
+			spec_special_rules["speed_to_damage_ratio"] = float(spec_item.get("ratio", 0.5))
+			print("[Player] Spec 特殊: 移速转全伤 ratio=", spec_special_rules["speed_to_damage_ratio"])
+		"speed_tradeoff":
+			spec_special_rules["speed_tradeoff_enabled"] = true
+			spec_special_rules["speed_tradeoff_melee_per_speed"] = float(spec_item.get("melee_per_speed", 2.0))
+			spec_special_rules["speed_tradeoff_health_penalty"] = float(spec_item.get("health_penalty_per_speed", 1.0))
+			spec_special_rules["speed_tradeoff_health_floor"] = float(spec_item.get("health_floor", 1.0))
+			print("[Player] Spec 特殊: 移速换伤害/生命")
+		"stance_cycle_melee_ranged":
+			spec_special_rules["stance_cycle_enabled"] = true
+			spec_special_rules["stance_cycle_interval_sec"] = float(spec_item.get("interval_sec", 3600.0))
+			spec_special_rules["stance_cycle_options"] = [
+				{"MeleeDamage": 30.0, "RangedDamage": -50.0},
+				{"MeleeDamage": -50.0, "RangedDamage": 30.0}
+			]
+			print("[Player] Spec 特殊: 周期姿态 interval=", spec_special_rules["stance_cycle_interval_sec"])
+		_:
+			print("[Player] Spec 特殊处理未落地: ", special)
+
+func _update_spec_cycle(delta: float) -> void:
+	if not bool(spec_special_rules.get("stance_cycle_enabled", false)):
+		return
+	var interval_sec: float = max(1.0, float(spec_special_rules.get("stance_cycle_interval_sec", 3600.0)))
+	spec_cycle_timer += delta
+	if spec_cycle_timer >= interval_sec:
+		spec_cycle_timer -= interval_sec
+		_roll_spec_cycle_bonus()
+
+func _roll_spec_cycle_bonus() -> void:
+	if not bool(spec_special_rules.get("stance_cycle_enabled", false)):
+		return
+	var options: Array = spec_special_rules.get("stance_cycle_options", [])
+	if options.is_empty():
+		return
+	var index: int = randi() % options.size()
+	var selected: Dictionary = options[index]
+	spec_cycle_bonus.clear()
+	for key: Variant in selected.keys():
+		spec_cycle_bonus[String(key)] = float(selected[key])
+	print("[Player] Spec 姿态切换: ", spec_cycle_bonus)
 
 ## 加载角色贴图（若缺失则生成占位图），并初始化呼吸动画基准
 func load_character_sprite() -> void:
@@ -232,6 +425,8 @@ func load_character_sprite() -> void:
 		var texture: Texture2D = load(sprite_path)
 		sprite.texture = texture
 		sprite.scale = Vector2(0.5, 0.5)
+		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		sprite.self_modulate = PLAYER_WORLD_TINT
 		var offset_x: float = character_data.get("sprite_offset_x", 0.0)
 		var offset_y: float = character_data.get("sprite_offset_y", 0.0)
 		## 统一脚底对齐，避免透明边导致脚下漂移
@@ -253,6 +448,8 @@ func _generate_placeholder_sprite() -> void:
 	var texture: ImageTexture = ImageTexture.create_from_image(img)
 	sprite.texture = texture
 	sprite.scale = Vector2(1.0, 1.0)
+	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	sprite.self_modulate = PLAYER_WORLD_TINT
 	_refresh_weapon_orbit_center_offset()
 	print("[Player] 使用角色占位图")
 	_init_breathe_base()
@@ -325,32 +522,204 @@ func _init_breathe_base() -> void:
 		return
 	base_sprite_scale = sprite.scale
 	base_sprite_position = sprite.position
+	sprite.rotation = 0.0
+	_refresh_breathe_profile()
+	_refresh_shadow_profile()
+	breathe_motion_ratio = 0.0
 	breathe_initialized = true
+
+## 根据角色体型与移速校准呼吸/步态参数
+func _refresh_breathe_profile() -> void:
+	var visual_height: float = 128.0
+	if sprite and sprite.texture:
+		visual_height = max(32.0, sprite.texture.get_size().y * absf(sprite.scale.y))
+	var size_factor: float = clamp(visual_height / 128.0, 0.75, 1.40)
+
+	var move_speed: float = max(60.0, get_actual_move_speed())
+	var speed_factor: float = clamp(move_speed / max(1.0, GameData.BASE_MOVE_SPEED), 0.75, 1.35)
+	var speed_lerp_t: float = (speed_factor - 0.75) / 0.60
+
+	breathe_idle_speed_runtime = clamp(lerp(0.9, 1.2, speed_lerp_t) * BREATHE_IDLE_SPEED, 0.8, 1.6)
+	breathe_move_speed_runtime = clamp(lerp(0.9, 1.15, speed_lerp_t) * BREATHE_MOVE_SPEED, 2.0, 4.0)
+	breathe_idle_offset_runtime = clamp(BREATHE_IDLE_OFFSET * size_factor, 0.35, 1.0)
+	move_bob_offset_runtime = clamp(MOVE_BOB_OFFSET * size_factor, 0.8, 2.0)
 
 ## 按速度比例驱动呼吸/步态动画
 func _update_breathe(delta: float) -> void:
 	if not breathe_initialized or not sprite:
 		return
-	## 速度比例：0=静止，1=满速
+	## 目标速度比例：0=静止，1=满速
 	var move_speed: float = max(get_actual_move_speed(), 1.0)
-	var speed_ratio: float = clamp(velocity.length() / move_speed, 0.0, 1.0)
+	var target_ratio: float = clamp(velocity.length() / move_speed, 0.0, 1.0)
+	var blend_t: float = clamp(delta * BREATHE_BLEND_SPEED, 0.0, 1.0)
+	breathe_motion_ratio = lerp(breathe_motion_ratio, target_ratio, blend_t)
 
-	## 插值动画频率：移动越快，频率越高
-	var speed: float = lerp(BREATHE_IDLE_SPEED, BREATHE_MOVE_SPEED, speed_ratio)
+	## 插值动画频率：移动越快，频率越高（使用平滑后的比例）
+	var speed: float = lerp(breathe_idle_speed_runtime, breathe_move_speed_runtime, breathe_motion_ratio)
 	breathe_time += delta * speed
 
-	if speed_ratio > 0.05:
-		## 移动：用锐化正弦模拟步伐起伏（不做缩放）
-		var step_wave: float = abs(sin(breathe_time))
-		var step_centered: float = (step_wave - 0.5) * 2.0
-		var step_sharp: float = sign(step_centered) * pow(abs(step_centered), MOVE_BOB_SHARPNESS)
-		sprite.scale = base_sprite_scale
-		sprite.position = base_sprite_position + Vector2(0.0, step_sharp * MOVE_BOB_OFFSET)
+	## 静止：轻微正弦呼吸
+	var idle_wave: float = sin(breathe_time) * breathe_idle_offset_runtime
+	## 移动：锐化正弦模拟步伐起伏（不做缩放）
+	var step_wave: float = abs(sin(breathe_time))
+	var step_centered: float = (step_wave - 0.5) * 2.0
+	var step_sharp: float = sign(step_centered) * pow(abs(step_centered), MOVE_BOB_SHARPNESS)
+	var move_wave: float = step_sharp * move_bob_offset_runtime
+	var motion_weight: float = smoothstep(0.05, 0.8, breathe_motion_ratio)
+	var offset_y: float = lerp(idle_wave, move_wave, motion_weight)
+	var offset_x: float = 0.0
+	var target_rot: float = 0.0
+	var scale_x_mul: float = 1.0
+	var scale_y_mul: float = 1.0
+
+	if enable_visual_liveliness:
+		var vel_x_ratio: float = clamp(velocity.x / max(move_speed, 1.0), -1.0, 1.0)
+		offset_x = vel_x_ratio * MOVE_SWAY_X_OFFSET * motion_weight
+		target_rot = vel_x_ratio * MOVE_TILT_MAX * motion_weight
+		var idle_squash_wave: float = sin(breathe_time * 0.6) * IDLE_SQUASH
+		scale_x_mul += idle_squash_wave
+		scale_y_mul -= idle_squash_wave
+		var impact: float = max(0.0, -step_sharp) * motion_weight
+		scale_x_mul += MOVE_STEP_SQUASH * impact - 0.020 * motion_weight
+		scale_y_mul -= MOVE_STEP_SQUASH * impact + 0.010 * motion_weight
+
+	var final_scale := Vector2(
+		base_sprite_scale.x * scale_x_mul * feedback_scale_mul.x,
+		base_sprite_scale.y * scale_y_mul * feedback_scale_mul.y
+	)
+	sprite.rotation = lerpf(sprite.rotation, target_rot, clamp(delta * 10.0, 0.0, 1.0))
+	sprite.scale = final_scale
+	sprite.position = base_sprite_position + Vector2(offset_x, offset_y)
+	_update_ground_shadow(motion_weight, step_sharp)
+
+func _update_camera_liveliness(delta: float) -> void:
+	if not camera:
+		return
+	hit_confirm_timer = max(0.0, hit_confirm_timer - delta)
+	hit_confirm_strength = lerpf(hit_confirm_strength, 0.0, clamp(delta * 8.5, 0.0, 1.0))
+	if not enable_camera_liveliness:
+		camera.offset = camera.offset.lerp(Vector2.ZERO, clamp(delta * 6.0, 0.0, 1.0))
+		return
+	camera_sway_time += delta * 1.8
+	var move_speed: float = max(get_actual_move_speed(), 1.0)
+	var move_ratio: float = clamp(velocity.length() / move_speed, 0.0, 1.0)
+	var drift := Vector2(
+		clamp(velocity.x * 0.018, -8.0, 8.0),
+		clamp(velocity.y * 0.012, -6.0, 6.0)
+	)
+	var breathe := Vector2(
+		sin(camera_sway_time * 1.4),
+		cos(camera_sway_time * 1.1) * 0.6
+	) * (0.8 + 1.6 * move_ratio)
+	var hit_weight: float = clamp(hit_confirm_timer / 0.16, 0.0, 1.0) * hit_confirm_strength
+	var hit_noise: Vector2 = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * (1.4 + 1.8 * hit_weight)
+	var hit_push: Vector2 = hit_confirm_dir * (3.0 * hit_weight)
+	var target_offset: Vector2 = drift + breathe + hit_noise + hit_push
+	camera.offset = camera.offset.lerp(target_offset, clamp(delta * 4.4, 0.0, 1.0))
+
+## 命中确认：由敌人受伤时回调，增强战斗“打中感”
+func notify_attack_landed(damage_amount: float, target_pos: Vector2 = Vector2.ZERO) -> void:
+	if damage_amount <= 0.0:
+		return
+	var impulse: float = clamp(0.08 + damage_amount / 260.0, 0.08, 0.34)
+	hit_confirm_strength = clamp(hit_confirm_strength + impulse, 0.0, 1.9)
+	hit_confirm_timer = max(hit_confirm_timer, 0.13)
+	if target_pos != Vector2.ZERO:
+		var dir: Vector2 = (target_pos - global_position).normalized()
+		if dir != Vector2.ZERO:
+			hit_confirm_dir = dir
+
+func _ensure_ground_shadow() -> void:
+	if ground_shadow or not sprite:
+		return
+	ground_shadow = Sprite2D.new()
+	ground_shadow.name = "GroundShadow"
+	ground_shadow.texture = _make_shadow_texture(110, 54, 0.34)
+	ground_shadow.centered = true
+	ground_shadow.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	ground_shadow.modulate = Color(0.0, 0.0, 0.0, SHADOW_BASE_ALPHA)
+	ground_shadow.z_index = -1
+	add_child(ground_shadow)
+	move_child(ground_shadow, 0)
+
+func _make_shadow_texture(width: int, height: int, falloff: float) -> Texture2D:
+	var w: int = max(12, width)
+	var h: int = max(8, height)
+	var img: Image = Image.create(w, h, false, Image.FORMAT_RGBA8)
+	var cx: float = (float(w) - 1.0) * 0.5
+	var cy: float = (float(h) - 1.0) * 0.5
+	var inv_rx: float = 1.0 / max(1.0, cx)
+	var inv_ry: float = 1.0 / max(1.0, cy)
+	for y in range(h):
+		for x in range(w):
+			var dx: float = (float(x) - cx) * inv_rx
+			var dy: float = (float(y) - cy) * inv_ry
+			var d: float = sqrt(dx * dx + dy * dy)
+			var alpha: float = clamp(1.0 - smoothstep(1.0 - falloff, 1.0, d), 0.0, 1.0)
+			img.set_pixel(x, y, Color(0.0, 0.0, 0.0, alpha))
+	return ImageTexture.create_from_image(img)
+
+func _refresh_shadow_profile() -> void:
+	if not ground_shadow:
+		return
+	var radius: float = 32.0
+	var shape_node: CollisionShape2D = get_node_or_null("CollisionShape2D")
+	if shape_node and shape_node.shape is CircleShape2D:
+		radius = (shape_node.shape as CircleShape2D).radius
+	var tex_w: int = int(clamp(radius * 3.0, 78.0, 148.0))
+	var tex_h: int = int(clamp(radius * 1.4, 32.0, 72.0))
+	ground_shadow.texture = _make_shadow_texture(tex_w, tex_h, 0.34)
+	shadow_base_offset_y = clamp(radius * 0.45, 10.0, 24.0)
+	ground_shadow.position = base_sprite_position + Vector2(0.0, shadow_base_offset_y)
+	ground_shadow.scale = Vector2.ONE
+
+func _update_ground_shadow(motion_weight: float, step_sharp: float) -> void:
+	if not ground_shadow:
+		return
+	var impact: float = max(0.0, -step_sharp) * motion_weight
+	var target_scale := Vector2(
+		1.0 - 0.10 * motion_weight + 0.10 * impact,
+		1.0 + 0.04 * motion_weight
+	)
+	ground_shadow.scale = ground_shadow.scale.lerp(target_scale, 0.18)
+	var target_pos: Vector2 = base_sprite_position + Vector2(0.0, shadow_base_offset_y)
+	ground_shadow.position = ground_shadow.position.lerp(target_pos, 0.22)
+	ground_shadow.modulate.a = clamp(SHADOW_BASE_ALPHA + 0.06 * motion_weight - 0.08 * impact, 0.18, 0.55)
+
+func _update_visual_feedback(delta: float) -> void:
+	if not sprite:
+		return
+	feedback_scale_mul = Vector2.ONE
+	if damage_feedback_timer > 0.0:
+		damage_feedback_timer = max(0.0, damage_feedback_timer - delta)
+		var t: float = damage_feedback_timer / 0.18
+		var recover: float = 1.0 - t
+		sprite.modulate = Color(1.0, 0.70 + 0.30 * recover, 0.70 + 0.30 * recover, 1.0)
+		feedback_scale_mul = Vector2(1.12 - 0.12 * recover, 0.90 + 0.10 * recover)
+	elif dodge_feedback_timer > 0.0:
+		dodge_feedback_timer = max(0.0, dodge_feedback_timer - delta)
+		var t_dodge: float = dodge_feedback_timer / 0.16
+		var rec_dodge: float = 1.0 - t_dodge
+		sprite.modulate = Color(0.78 + 0.22 * rec_dodge, 0.92 + 0.08 * rec_dodge, 1.0, 1.0)
+		feedback_scale_mul = Vector2(0.94 + 0.06 * rec_dodge, 1.06 - 0.06 * rec_dodge)
 	else:
-		## 静止：轻微正弦呼吸
-		var wave: float = sin(breathe_time)
-		sprite.scale = base_sprite_scale
-		sprite.position = base_sprite_position + Vector2(0.0, wave * BREATHE_IDLE_OFFSET)
+		sprite.modulate = Color.WHITE
+
+func _trigger_damage_feedback() -> void:
+	damage_feedback_timer = 0.18
+	## 玩家受击时给一记反向镜头脉冲，提升冲击感
+	hit_confirm_strength = clamp(hit_confirm_strength + 0.30, 0.0, 2.2)
+	hit_confirm_timer = max(hit_confirm_timer, 0.18)
+	if hit_confirm_dir == Vector2.ZERO:
+		hit_confirm_dir = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)).normalized()
+
+func _trigger_dodge_feedback() -> void:
+	dodge_feedback_timer = 0.16
+
+func _update_dynamic_z_index() -> void:
+	if not enable_dynamic_z_sort:
+		return
+	z_index = int(clamp(global_position.y * Z_SORT_SCALE, -1800.0, 1800.0)) + Z_SORT_BIAS
 
 ## 装备初始武器（role.csv 的 initial_weapon）
 func equip_initial_weapon() -> void:
@@ -375,14 +744,45 @@ func equip_initial_weapon() -> void:
 # 属性获取
 ##############################################################################
 
-## 获取最终属性值（基础+装备+商店+Spec 倍率）
-func get_final_stat(stat_name: String) -> float:
+## 获取基础+装备+商店+Spec（不含特殊动态规则）
+func _get_stat_before_special(stat_name: String) -> float:
 	var base_value: float = base_stats.get(stat_name, 0.0)
 	var equip_value: float = equipment_bonus.get(stat_name, 0.0)
 	var shop_value: float = shop_bonus.get(stat_name, 0.0)
 	var total: float = base_value + equip_value + shop_value
 	if stat_name in spec_multipliers:
 		total *= spec_multipliers[stat_name]
+	if stat_name in spec_flat_bonus:
+		total += spec_flat_bonus[stat_name]
+	return total
+
+## 获取最终属性值（基础+装备+商店+Spec+特殊规则）
+func get_final_stat(stat_name: String) -> float:
+	var total: float = _get_stat_before_special(stat_name)
+
+	## 特殊规则1：移速转全伤
+	if stat_name == "AllDamage" and bool(spec_special_rules.get("speed_to_damage_enabled", false)):
+		var ratio: float = float(spec_special_rules.get("speed_to_damage_ratio", 0.5))
+		var move_speed_stat: float = _get_stat_before_special("MoveSpeed")
+		if move_speed_stat > 0.0:
+			total += move_speed_stat * ratio
+
+	## 特殊规则2：每+1移速，+2近战且-1生命（生命最低1）
+	if bool(spec_special_rules.get("speed_tradeoff_enabled", false)):
+		var move_speed_value: float = _get_stat_before_special("MoveSpeed")
+		var speed_gain: float = max(0.0, move_speed_value)
+		if stat_name == "MeleeDamage":
+			var melee_ratio: float = float(spec_special_rules.get("speed_tradeoff_melee_per_speed", 2.0))
+			total += speed_gain * melee_ratio
+		elif stat_name == "Health":
+			var hp_penalty: float = float(spec_special_rules.get("speed_tradeoff_health_penalty", 1.0))
+			var hp_floor: float = float(spec_special_rules.get("speed_tradeoff_health_floor", 1.0))
+			total = max(hp_floor, total - speed_gain * hp_penalty)
+
+	## 特殊规则3：周期姿态加值
+	if stat_name in spec_cycle_bonus:
+		total += float(spec_cycle_bonus[stat_name])
+
 	return total
 
 ## 获取实际移动速度（基础 MoveSpeed 经 GameData 曲线转换）
@@ -402,14 +802,19 @@ func get_armor_dr() -> float:
 
 ## 向空槽添加武器：实例化场景、分配槽位、初始化武器数据
 func add_weapon(weapon_data: Dictionary) -> bool:
+	var weapon_id: String = String(weapon_data.get("weapon_id", "")).strip_edges()
+	if weapon_id.is_empty():
+		push_error("[Player] 武器ID为空，无法装备")
+		return false
+
 	var empty_slot: int = _find_empty_weapon_slot()
 	if empty_slot == -1:
 		push_warning("[Player] 武器槽已满")
 		return false
 
-	var weapon_template: Dictionary = GameData.get_weapon(weapon_data["weapon_id"])
+	var weapon_template: Dictionary = GameData.get_weapon(weapon_id)
 	if weapon_template.is_empty():
-		push_error("[Player] 武器模板不存在: " + weapon_data["weapon_id"])
+		push_error("[Player] 武器模板不存在: " + weapon_id)
 		return false
 
 	var weapon_class: String = _get_weapon_class(weapon_template)
@@ -417,6 +822,7 @@ func add_weapon(weapon_data: Dictionary) -> bool:
 	if not weapon_scene:
 		push_error("[Player] 未找到武器场景: " + weapon_class)
 		return false
+	var weapon_payload: Dictionary = _build_weapon_payload(weapon_data, weapon_id, empty_slot)
 
 	# 创建武器槽节点并挂载武器实例，确保环绕位置以玩家为基准
 	var slot: Node2D = Node2D.new()
@@ -459,17 +865,58 @@ func add_weapon(weapon_data: Dictionary) -> bool:
 	slot.position = weapon_pos
 	slot.rotation = 0.0
 	weapon.rotation = weapon_angle
-	weapon.initialize(weapon_template, weapon_data, self)
 
-	weapon_data["slot_index"] = empty_slot
-	weapon_data["scene_node"] = weapon
-	weapon_data["slot_node"] = slot
-	weapon_slots[empty_slot] = weapon_data
+	# 先写入槽位并刷新装备词条，确保新武器初始化时拿到最新属性
+	weapon_payload["scene_node"] = weapon
+	weapon_payload["slot_node"] = slot
+	weapon_slots[empty_slot] = weapon_payload
 
 	recalculate_equipment_bonus()
+	if not weapon.has_method("initialize"):
+		push_error("[Player] 武器脚本缺少 initialize(): " + weapon_id)
+		remove_weapon(empty_slot)
+		return false
 
-	print("[Player] 装备武器: ", weapon_template.get("name_cn", weapon_data["weapon_id"]), " 槽=", empty_slot, " 角度=", rad_to_deg(weapon_angle))
+	weapon.initialize(weapon_template, weapon_payload, self)
+	update_all_weapons()
+
+	print("[Player] 装备武器: ", weapon_template.get("name_cn", weapon_id), " 槽=", empty_slot, " 角度=", rad_to_deg(weapon_angle))
 	return true
+
+## 构建标准化武器实例数据（兼容商店/初始武器/调试注入）
+func _build_weapon_payload(raw_weapon_data: Dictionary, weapon_id: String, slot_index: int) -> Dictionary:
+	var payload: Dictionary = raw_weapon_data.duplicate(true)
+	payload["weapon_id"] = weapon_id
+	payload["slot_index"] = slot_index
+
+	var quality: String = String(payload.get("quality", "white")).strip_edges().to_lower()
+	match quality:
+		"white", "blue", "purple", "gold":
+			pass
+		_:
+			quality = "white"
+	payload["quality"] = quality
+	payload["attributes"] = _sanitize_weapon_attributes(payload.get("attributes", []))
+	return payload
+
+## 清洗词条数组，避免异常数据导致武器初始化后逻辑失效
+func _sanitize_weapon_attributes(raw_attributes: Variant) -> Array:
+	var attributes: Array = []
+	if typeof(raw_attributes) != TYPE_ARRAY:
+		return attributes
+	for raw_attr: Variant in raw_attributes:
+		if typeof(raw_attr) != TYPE_DICTIONARY:
+			continue
+		var attr_data: Dictionary = raw_attr
+		var attr_type: String = String(attr_data.get("type", "")).strip_edges()
+		if attr_type.is_empty():
+			continue
+		attributes.append({
+			"type": attr_type,
+			"value": float(attr_data.get("value", 0.0)),
+			"locked": bool(attr_data.get("locked", false))
+		})
+	return attributes
 
 func remove_weapon(slot_index: int) -> void:
 	if slot_index < 0 or slot_index >= MAX_WEAPON_SLOTS:
@@ -512,9 +959,13 @@ func recalculate_equipment_bonus() -> void:
 			var attr_value: float = attr.get("value", 0.0)
 			if attr_type.is_empty():
 				continue
-			if attr_type not in equipment_bonus:
-				equipment_bonus[attr_type] = 0.0
-			equipment_bonus[attr_type] += attr_value
+			var mapped_stat: String = String(EQUIP_ATTR_TO_STAT.get(attr_type, attr_type))
+			if mapped_stat == "damage":
+				## damage词条由各武器脚本走“平A附加伤害”通道处理，避免重复叠加
+				continue
+			if mapped_stat not in equipment_bonus:
+				equipment_bonus[mapped_stat] = 0.0
+			equipment_bonus[mapped_stat] += attr_value
 	print("[Player] 装备加成已刷新")
 
 ##############################################################################
@@ -529,8 +980,14 @@ func add_shop_bonus(attribute: String, value: float) -> void:
 
 	update_all_weapons()
 	if attribute.begins_with("Enemy"):
-		# TODO: 通知 EnemySpawner 重新计算生成参数
-		pass
+		var spawners: Array[Node] = get_tree().get_nodes_in_group("enemy_spawner")
+		if spawners.is_empty():
+			var maybe_spawner: Node = get_tree().root.find_child("EnemySpawner", true, false)
+			if maybe_spawner:
+				spawners.append(maybe_spawner)
+		for spawner: Node in spawners:
+			if spawner.has_method("_refresh_difficulty_from_player"):
+				spawner.call("_refresh_difficulty_from_player")
 
 func get_shop_bonus_value(attribute: String) -> float:
 	return shop_bonus.get(attribute, 0.0)
@@ -554,6 +1011,7 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 	## 限制玩家在地图边界内
 	_clamp_to_map_bounds()
+	_update_dynamic_z_index()
 	_update_weapon_positions()
 
 ## 限制玩家全局坐标在地图范围内
@@ -579,15 +1037,36 @@ func _clamp_to_map_bounds() -> void:
 
 ## 玩家受伤入口
 func take_damage(damage: float) -> void:
+	if is_dead:
+		return
+	if damage_iframe_timer > 0.0:
+		return
+
 	var dodge_chance: float = get_final_stat("Dodge")
 	if randf() * 100.0 < dodge_chance:
 		print("[Player] 闪避成功!")
+		total_dodge_count += 1
+		damage_iframe_timer = DAMAGE_IFRAME_DURATION * 0.7
+		_trigger_dodge_feedback()
+		if bool(spec_special_rules.get("dodge_heal_enabled", false)):
+			var heal_chance: float = float(spec_special_rules.get("dodge_heal_chance", 10.0))
+			var heal_amount: float = float(spec_special_rules.get("dodge_heal_amount", 1.0))
+			if heal_chance > 0.0 and randf() * 100.0 < heal_chance and heal_amount > 0.0:
+				heal(heal_amount)
+				total_dodge_heal += heal_amount
 		return
 
 	var dr: float = get_armor_dr()
+	var max_hp: float = max(1.0, get_final_stat("Health"))
 	var actual_damage: float = damage * (1.0 - dr)
+	var single_hit_cap: float = max_hp * DAMAGE_CAP_MAX_HP_RATIO
+	actual_damage = min(actual_damage, single_hit_cap)
 	current_hp -= actual_damage
+	total_damage_taken += actual_damage
+	total_hits_taken += 1
 	current_hp = max(current_hp, 0.0)
+	damage_iframe_timer = DAMAGE_IFRAME_DURATION
+	_trigger_damage_feedback()
 	print("[Player] 受到伤害: ", actual_damage, " 当前HP=", current_hp)
 	if current_hp <= 0.0:
 		die()
@@ -601,8 +1080,20 @@ func heal(amount: float) -> void:
 
 ## 玩家死亡
 func die() -> void:
+	if is_dead:
+		return
+	is_dead = true
 	print("[Player] 玩家死亡")
 	set_physics_process(false)
+	set_process(false)
+	if hurt_box:
+		hurt_box.monitoring = false
+	collision_layer = 0
+	collision_mask = 0
+	if GameManager and GameManager.has_method("trigger_game_over"):
+		GameManager.trigger_game_over()
+	elif GameManager:
+		GameManager.game_over.emit()
 
 ## 被敌方投射物命中（TODO: 读取子弹伤害）
 func _on_hurt_box_area_entered(area: Area2D) -> void:
@@ -631,7 +1122,9 @@ func level_up() -> void:
 ##############################################################################
 
 func get_pickup_range() -> float:
-	return get_final_stat("PickupRange")
+	var bonus: float = get_final_stat("PickupRange")
+	var final_range: float = PICKUP_RANGE_BASE + bonus
+	return clamp(final_range, PICKUP_RANGE_MIN, PICKUP_RANGE_MAX)
 
 func get_display_stats() -> Dictionary:
 	var display: Dictionary = {}
@@ -651,7 +1144,40 @@ func get_display_stats() -> Dictionary:
 	display[Localization.tr_text("Cooldown")] = str(int(get_final_stat("Cooldown"))) + "%"
 	display[Localization.tr_text("Range")] = str(int(get_final_stat("Range")))
 	display[Localization.tr_text("PickupRange")] = str(int(get_pickup_range()))
+
+	## 商店高频词条补充展示（仅在非0时显示）
+	_add_display_stat_if_nonzero(display, "BurnChance", get_final_stat("BurnChance"), "%")
+	_add_display_stat_if_nonzero(display, "SlowChance", get_final_stat("SlowChance"), "%")
+	_add_display_stat_if_nonzero(display, "FreezeChance", get_final_stat("FreezeChance"), "%")
+	_add_display_stat_if_nonzero(display, "ExplosionRange", get_final_stat("ExplosionRange"))
+	_add_display_stat_if_nonzero(display, "ExplosionDamage", get_final_stat("ExplosionDamage"), "%")
+	_add_display_stat_if_nonzero(display, "Penetration", get_final_stat("Penetration"))
+	_add_display_stat_if_nonzero(display, "PenetrationDamage", get_final_stat("PenetrationDamage"), "%")
+	_add_display_stat_if_nonzero(display, "BossDamage", get_final_stat("BossDamage"), "%")
+	_add_display_stat_if_nonzero(display, "SummonCount", get_final_stat("SummonCount"))
+	_add_display_stat_if_nonzero(display, "SummonCooldownInherit", get_final_stat("SummonCooldownInherit"), "%")
+	_add_display_stat_if_nonzero(display, "SummonCritInherit", get_final_stat("SummonCritInherit"), "%")
+	_add_display_stat_if_nonzero(display, "ItemPrice", get_final_stat("ItemPrice"), "%")
+	_add_display_stat_if_nonzero(display, "ExpRate", get_final_stat("ExpRate"), "%")
+	_add_display_stat_if_nonzero(display, "MaterialCostRate", get_final_stat("MaterialCostRate"), "%")
+	_add_display_stat_if_nonzero(display, "DoubleMaterialChance", get_final_stat("DoubleMaterialChance"), "%")
+	_add_display_stat_if_nonzero(display, "MaterialRespawnCooldown", get_final_stat("MaterialRespawnCooldown"), "%")
+	_add_display_stat_if_nonzero(display, "EnemyMaterialDropRate", get_final_stat("EnemyMaterialDropRate"), "%")
+	_add_display_stat_if_nonzero(display, "EnemyCount", get_final_stat("EnemyCount"), "%")
+	_add_display_stat_if_nonzero(display, "EnemyHealth", get_final_stat("EnemyHealth"), "%")
+	_add_display_stat_if_nonzero(display, "EnemySpeed", get_final_stat("EnemySpeed"), "%")
+	_add_display_stat_if_nonzero(display, "EnemyCritChance", get_final_stat("EnemyCritChance"), "%")
 	return display
+
+func _add_display_stat_if_nonzero(display: Dictionary, loc_key: String, value: float, suffix: String = "") -> void:
+	if absf(value) < 0.001:
+		return
+	var shown: String = ""
+	if absf(value - round(value)) < 0.01:
+		shown = str(int(round(value)))
+	else:
+		shown = str(snappedf(value, 0.1))
+	display[Localization.tr_text(loc_key)] = shown + suffix
 
 func get_display_stats_en() -> Dictionary:
 	var prev_lang: String = Localization.get_current_language()
@@ -727,6 +1253,7 @@ func get_weapon_slot_node(slot_index: int) -> Node2D:
 	return null
 
 func update_all_weapons() -> void:
+	recalculate_equipment_bonus()
 	for i in range(MAX_WEAPON_SLOTS):
 		var weapon_node: Node2D = get_weapon_node(i)
 		if weapon_node and weapon_node.has_method("update_cooldown"):
@@ -848,6 +1375,15 @@ func get_total_dps() -> float:
 		if weapon_node and weapon_node.has_method("calculate_dps"):
 			total_dps += weapon_node.calculate_dps()
 	return total_dps
+
+## 返回生存统计（用于结算和后续平衡）
+func get_survival_metrics() -> Dictionary:
+	return {
+		"damage_taken": total_damage_taken,
+		"hits_taken": total_hits_taken,
+		"dodge_count": total_dodge_count,
+		"dodge_heal": total_dodge_heal
+	}
 
 func _on_level_up(level: int) -> void:
 	current_level = level

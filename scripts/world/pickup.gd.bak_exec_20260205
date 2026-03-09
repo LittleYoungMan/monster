@@ -8,10 +8,6 @@
 ##############################################################################
 extends Area2D
 
-## 拾取表现开关：用于快速A/B测试（保留回滚能力）
-@export var enable_pickup_liveliness: bool = true
-@export var enable_fast_magnet: bool = true
-
 ##############################################################################
 # 类型
 ##############################################################################
@@ -38,51 +34,29 @@ var exp_amount: int = 0
 ## 矿石数量
 var ore_amount: int = 0
 
-## 掉落来源（enemy/boss/mine等）
-var source: String = "unknown"
-
 ## 玩家引用
 var player: CharacterBody2D = null
 
 ## 吸附速度
 ## 单位：像素/秒
 ## 作用：掉落向玩家吸附速度
-## 调整范围：400-1400
-## 当前值：980
-const PICKUP_SPEED: float = 980.0
-
-## 吸附速度下限
-const PICKUP_MIN_SPEED: float = 720.0
-
-## 吸附速度上限
-const PICKUP_MAX_SPEED: float = 1860.0
-
-## 近距离强吸附倍率（范围内后半段）
-const PICKUP_CLOSE_PULL_MULT: float = 1.85
-
-## 近身自动收取距离，避免贴脸漂移
-const SNAP_PICKUP_DISTANCE: float = 28.0
-
-## 外圈缓吸附范围倍率（解决“要贴很近才吸附”）
-const PICKUP_OUTER_RANGE_MULT: float = 2.2
-
-## 外圈缓吸附速度
-const PICKUP_OUTER_SPEED_MIN: float = 220.0
-const PICKUP_OUTER_SPEED_MAX: float = 460.0
+## 调整范围：200-800
+## 当前值：420
+const PICKUP_SPEED: float = 420.0
 
 ## 默认拾取范围
 ## 单位：像素
 ## 作用：玩家未提供拾取范围时的默认值
 ## 调整范围：40-120
-## 当前值：96
-const DEFAULT_PICKUP_RANGE: float = 96.0
+## 当前值：80
+const DEFAULT_PICKUP_RANGE: float = 80.0
 
 ## 最小拾取范围
 ## 单位：像素
 ## 作用：限制玩家过小拾取范围
 ## 调整范围：20-80
-## 当前值：56
-const MIN_PICKUP_RANGE: float = 56.0
+## 当前值：40
+const MIN_PICKUP_RANGE: float = 40.0
 
 ## 拾取物占位大小
 ## 单位：像素
@@ -91,32 +65,11 @@ const MIN_PICKUP_RANGE: float = 56.0
 ## 当前值：24
 const PICKUP_ICON_SIZE: int = 24
 
-## 视觉基础缩放（经验/金币）
-const GOLD_EXP_SCALE: float = 0.085
-
-## 视觉基础缩放（矿石）
-const ORE_SCALE: float = 0.09
-
-## 浮动表现参数
-const VISUAL_FLOAT_AMPLITUDE: float = 0.9
-const VISUAL_FLOAT_SPEED: float = 2.8
-const VISUAL_PULSE_SPEED: float = 4.5
-const VISUAL_PULSE_AMPLITUDE: float = 0.05
-
 ##############################################################################
 # 节点引用
 ##############################################################################
 
 @onready var sprite: Sprite2D = $Sprite2D
-
-## 视觉基准缩放（用于脉冲动画）
-var base_visual_scale: Vector2 = Vector2.ONE
-
-## 视觉计时器
-var visual_time: float = 0.0
-
-## 防重复拾取标记
-var collected: bool = false
 
 ##############################################################################
 # 初始化
@@ -127,10 +80,9 @@ func _ready() -> void:
 	add_to_group("pickup")
 	collision_layer = CollisionLayers.get_layer_mask(CollisionLayers.PICKUP)
 	collision_mask = CollisionLayers.get_layer_mask(CollisionLayers.PLAYER)
-	z_index = 80
+	z_index = 50
 	body_entered.connect(_on_body_entered)
 	player = get_tree().get_first_node_in_group("player")
-	visual_time = randf() * TAU
 	# 默认隐藏并关闭碰撞，等待 initialize 设置内容后再启用
 	visible = false
 	monitoring = false
@@ -139,45 +91,16 @@ func _ready() -> void:
 
 ## 吸附移动（基于拾取范围）
 func _physics_process(delta: float) -> void:
-	if collected:
-		return
 	if not player or not is_instance_valid(player):
 		return
 	var range: float = DEFAULT_PICKUP_RANGE
 	if player.has_method("get_pickup_range"):
 		range = max(MIN_PICKUP_RANGE, player.get_pickup_range())
-	var outer_range: float = range * PICKUP_OUTER_RANGE_MULT
-	var to_player: Vector2 = player.global_position - global_position
-	var dist: float = to_player.length()
+	var dist: float = global_position.distance_to(player.global_position)
 	if dist <= range:
-		var dir: Vector2 = to_player / max(dist, 0.001)
-		var dist_ratio: float = clamp(1.0 - dist / max(range, 1.0), 0.0, 1.0)
-		var speed: float = PICKUP_SPEED
-		if enable_fast_magnet:
-			speed = lerp(PICKUP_MIN_SPEED, PICKUP_MAX_SPEED, dist_ratio * dist_ratio)
-			if dist_ratio >= 0.45:
-				speed *= PICKUP_CLOSE_PULL_MULT
+		var dir: Vector2 = (player.global_position - global_position).normalized()
+		var speed: float = PICKUP_SPEED * (1.0 + (range - dist) / max(range, 1.0))
 		global_position += dir * speed * delta
-		if dist <= SNAP_PICKUP_DISTANCE:
-			_collect(player)
-	elif dist <= outer_range and enable_fast_magnet:
-		var dir_outer: Vector2 = to_player / max(dist, 0.001)
-		var outer_t: float = 1.0 - (dist - range) / max(outer_range - range, 1.0)
-		outer_t = clamp(outer_t, 0.0, 1.0)
-		var outer_speed: float = lerp(PICKUP_OUTER_SPEED_MIN, PICKUP_OUTER_SPEED_MAX, outer_t)
-		global_position += dir_outer * outer_speed * delta
-
-func _process(delta: float) -> void:
-	if not sprite or not sprite.visible:
-		return
-	if not enable_pickup_liveliness:
-		sprite.scale = base_visual_scale
-		sprite.position = Vector2(0, -5.0)
-		return
-	visual_time += delta * VISUAL_FLOAT_SPEED
-	var pulse: float = 1.0 + sin(visual_time * VISUAL_PULSE_SPEED) * VISUAL_PULSE_AMPLITUDE
-	sprite.scale = base_visual_scale * pulse
-	sprite.position = Vector2(0, -5.0 + sin(visual_time) * VISUAL_FLOAT_AMPLITUDE)
 
 ## 初始化拾取物
 ##
@@ -188,8 +111,6 @@ func initialize(config: Dictionary) -> void:
 	gold_amount = int(config.get("gold", 0))
 	exp_amount = int(config.get("exp", 0))
 	ore_amount = int(config.get("ore", 0))
-	source = String(config.get("source", "unknown"))
-	collected = false
 	_apply_visual()
 	visible = true
 	monitoring = true
@@ -204,29 +125,13 @@ func initialize(config: Dictionary) -> void:
 
 ## 玩家触碰拾取
 func _on_body_entered(body: Node2D) -> void:
-	if collected:
-		return
 	if not body.is_in_group("player"):
 		return
-	_collect(body)
-
-func _collect(collector: Node2D = null) -> void:
-	if collected:
-		return
-	collected = true
 	if pickup_type == TYPE_ORE:
-		var final_ore: int = ore_amount
-		var double_chance: float = 0.0
-		if GameManager and GameManager.has_method("get_player_stat"):
-			double_chance = float(GameManager.get_player_stat("DoubleMaterialChance", 0.0))
-		elif collector and collector.has_method("get_final_stat"):
-			double_chance = float(collector.get_final_stat("DoubleMaterialChance"))
-		if double_chance > 0.0 and randf() * 100.0 < double_chance:
-			final_ore *= 2
-		GameManager.add_ore(final_ore, "pickup_ore_" + source)
+		GameManager.add_ore(ore_amount)
 	else:
 		if gold_amount > 0:
-			GameManager.add_gold(gold_amount, "pickup_gold_" + source)
+			GameManager.add_gold(gold_amount)
 		if exp_amount > 0:
 			GameManager.add_exp(exp_amount)
 	queue_free()
@@ -239,31 +144,29 @@ func _collect(collector: Node2D = null) -> void:
 func _apply_visual() -> void:
 	if not sprite:
 		return
+	# 如果有专门的贴图路径就加载，否则隐藏 sprite，避免绿色占位块
 	var texture_path: String = ""
 	match pickup_type:
 		TYPE_ORE:
-			texture_path = "res://assets/PIC/map/256/ore_2.png"
+			texture_path = "res://assets/PIC/map/256/ore_1.png" if randi() % 2 == 0 else "res://assets/PIC/map/256/ore_2.png"
 		TYPE_GOLD_EXP:
 			texture_path = "res://assets/PIC/map/256/moneyAndExp.png"
 	if texture_path != "" and ResourceLoader.exists(texture_path):
 		sprite.texture = load(texture_path)
 	else:
+		# 兜底占位，确保可见
 		var img: Image = Image.create(PICKUP_ICON_SIZE, PICKUP_ICON_SIZE, false, Image.FORMAT_RGBA8)
 		var color: Color = Color(1, 1, 0, 1.0) if pickup_type == TYPE_GOLD_EXP else Color(0.2, 0.9, 1.0, 1.0)
 		img.fill(color)
 		sprite.texture = ImageTexture.create_from_image(img)
-	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	sprite.visible = true
-	sprite.rotation = 0.0
+	# 缩放调小：金币/经验 0.22，矿石 0.18
 	if pickup_type == TYPE_ORE:
-		var ore_scale_bonus: float = clamp((float(ore_amount) - 1.0) * 0.008, 0.0, 0.025)
-		base_visual_scale = Vector2.ONE * (ORE_SCALE + ore_scale_bonus)
-		sprite.self_modulate = Color(0.86, 0.96, 1.0, 1.0)
+		sprite.scale = Vector2(0.18, 0.18)
 	else:
-		var economy_amount: float = float(max(1, gold_amount + exp_amount))
-		var econ_scale_bonus: float = clamp((economy_amount - 4.0) / 120.0, 0.0, 0.03)
-		base_visual_scale = Vector2.ONE * (GOLD_EXP_SCALE + econ_scale_bonus)
-		sprite.self_modulate = Color(1.0, 0.96, 0.82, 1.0)
-	sprite.scale = base_visual_scale
-	sprite.position = Vector2(0, -5.0)
+		sprite.scale = Vector2(0.22, 0.22)
+	# 上移防埋入
+	sprite.position.y = -6
+	sprite.self_modulate = Color(1, 1, 1, 1)
 	visible = true

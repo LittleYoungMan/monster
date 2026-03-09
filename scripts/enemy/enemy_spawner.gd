@@ -60,11 +60,18 @@ var enemy_count_by_type: Dictionary = {}
 ## 玩家引用（用于刷怪位置）
 var player: CharacterBody2D = null
 
+## 运行期难度倍率（受商店卡/角色属性影响）
+var enemy_count_mult: float = 1.0
+var enemy_hp_mult: float = 1.0
+var enemy_speed_mult: float = 1.0
+var enemy_crit_bonus: float = 0.0
+
 ##############################################################################
 # 初始化
 ##############################################################################
 
 func _ready() -> void:
+	add_to_group("enemy_spawner")
 	## 兜底加载怪物场景
 	if not enemy_scene:
 		enemy_scene = load("res://scenes/enemy/enemy.tscn")
@@ -81,6 +88,7 @@ func _ready() -> void:
 	var players: Array[Node] = get_tree().get_nodes_in_group("player")
 	if players.size() > 0:
 		player = players[0]
+	_refresh_difficulty_from_player()
 
 	## 订阅GameManager事件
 	if GameManager:
@@ -123,7 +131,8 @@ func _spawn_wave() -> void:
 		print("[EnemySpawner] 达到最大怪物数量，暂停刷怪")
 		return
 
-	var batch_size: int = SpawnerConfig.get_batch_size(current_minute)
+	var base_batch_size: int = SpawnerConfig.get_batch_size(current_minute)
+	var batch_size: int = max(1, int(round(float(base_batch_size) * enemy_count_mult)))
 	for i in range(batch_size):
 		_spawn_single_enemy()
 
@@ -144,10 +153,11 @@ func _spawn_single_enemy() -> void:
 
 	var spawn_pos: Vector2 = _get_spawn_position(monster_id)
 	var enemy: CharacterBody2D = enemy_scene.instantiate()
-	enemy.initialize(monster_id, current_minute)
 	enemy.global_position = spawn_pos
 	enemy.tree_exited.connect(_on_enemy_died.bind(monster_id))
 	get_parent().add_child(enemy)
+	apply_difficulty_modifier(enemy)
+	enemy.initialize(monster_id, current_minute)
 
 	enemy_count_total += 1
 	if monster_id not in enemy_count_by_type:
@@ -304,6 +314,47 @@ func _spawn_boss_minions() -> void:
 	print("[EnemySpawner] Boss召唤小怪: ", count, "只")
 
 ##############################################################################
+# 难度修正（对齐文档中的apply_difficulty_modifier）
+##############################################################################
+
+func _refresh_difficulty_from_player() -> void:
+	enemy_count_mult = _get_player_stat_multiplier("EnemyCount", 0.5, 2.5)
+	enemy_hp_mult = _get_player_stat_multiplier("EnemyHealth", 0.3, 4.0)
+	enemy_speed_mult = _get_player_stat_multiplier("EnemySpeed", 0.4, 2.5)
+	enemy_crit_bonus = _get_player_stat("EnemyCritChance")
+
+func _get_player_stat(stat_name: String) -> float:
+	if GameManager and GameManager.has_method("get_player_stat"):
+		return float(GameManager.get_player_stat(stat_name, 0.0))
+	if player and is_instance_valid(player) and player.has_method("get_final_stat"):
+		return float(player.get_final_stat(stat_name))
+	return 0.0
+
+func _get_player_stat_multiplier(stat_name: String, min_mult: float, max_mult: float) -> float:
+	if GameManager and GameManager.has_method("get_player_stat_multiplier"):
+		return float(GameManager.get_player_stat_multiplier(stat_name, min_mult, max_mult))
+	var value_pct: float = _get_player_stat(stat_name)
+	return clamp(1.0 + value_pct / 100.0, min_mult, max_mult)
+
+## 应用商店卡/角色对敌人的难度修正
+func apply_difficulty_modifier(enemy: CharacterBody2D) -> void:
+	if not enemy:
+		return
+	if enemy.has_method("set_spawn_difficulty"):
+		enemy.call("set_spawn_difficulty", enemy_hp_mult, enemy_speed_mult, enemy_crit_bonus)
+		return
+	var max_hp_value: Variant = enemy.get("max_hp")
+	if typeof(max_hp_value) == TYPE_FLOAT or typeof(max_hp_value) == TYPE_INT:
+		var new_max_hp: float = max(1.0, float(max_hp_value) * enemy_hp_mult)
+		enemy.set("max_hp", new_max_hp)
+		enemy.set("current_hp", new_max_hp)
+	var speed_value: Variant = enemy.get("speed")
+	if typeof(speed_value) == TYPE_FLOAT or typeof(speed_value) == TYPE_INT:
+		var new_speed: float = max(10.0, float(speed_value) * enemy_speed_mult)
+		enemy.set("speed", new_speed)
+	enemy.set("extra_crit_chance", enemy_crit_bonus)
+
+##############################################################################
 # 时间回调
 ##############################################################################
 
@@ -327,17 +378,25 @@ func _spawn_boss(boss_id: String, minute_mark: int) -> void:
 	if not boss_scene:
 		push_error("[EnemySpawner] Boss场景未加载")
 		return
+	var spawn_monster_id: String = boss_id
+	if GameData.has_method("get_boss_spawn_monster_id"):
+		var resolved_id: String = GameData.get_boss_spawn_monster_id(boss_id)
+		if not resolved_id.is_empty():
+			spawn_monster_id = resolved_id
 	var boss: CharacterBody2D = boss_scene.instantiate()
-	if boss.has_method("initialize_boss"):
-		boss.initialize_boss(boss_id, minute_mark)
-	else:
-		boss.initialize(boss_id, minute_mark)
 	boss.global_position = _get_spawn_around_player()
 	get_parent().add_child(boss)
-	print("[EnemySpawner] 刷新Boss: ", boss_id, " @", minute_mark, "min")
+	apply_difficulty_modifier(boss)
+	if boss.has_method("initialize_boss"):
+		boss.initialize_boss(spawn_monster_id, minute_mark)
+	else:
+		boss.initialize(spawn_monster_id, minute_mark)
+	print("[EnemySpawner] 刷新Boss: ", boss_id, " => ", spawn_monster_id, " @", minute_mark, "min")
 
 func _update_spawn_settings(minute: int) -> void:
+	_refresh_difficulty_from_player()
 	current_spawn_interval = SpawnerConfig.get_spawn_interval(minute)
+	current_spawn_interval = max(0.25, current_spawn_interval / max(0.5, sqrt(enemy_count_mult)))
 	if minute % 5 == 0:
 		SpawnerConfig.print_current_config(minute)
 
@@ -352,9 +411,10 @@ func _on_enemy_died(monster_id: String) -> void:
 
 func force_spawn_monster(monster_id: String) -> void:
 	var enemy: CharacterBody2D = enemy_scene.instantiate()
-	enemy.initialize(monster_id, current_minute)
 	enemy.global_position = player.global_position + Vector2(200, 0)
 	get_parent().add_child(enemy)
+	apply_difficulty_modifier(enemy)
+	enemy.initialize(monster_id, current_minute)
 	print("[EnemySpawner] 强制刷怪: ", monster_id)
 
 func get_enemy_stats() -> Dictionary:

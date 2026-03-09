@@ -151,11 +151,22 @@ func _get_opaque_left_offset(texture: Texture2D) -> float:
 func _setup_attack_range() -> void:
 	var base_range: float = weapon_template.get("attack_range", 120.0)
 	var explosion_range_bonus: float = player.get_final_stat("ExplosionRange")
-	var final_range: float = base_range + explosion_range_bonus
+	var range_bonus: float = player.get_final_stat("Range")
+	var final_range: float = base_range + explosion_range_bonus + range_bonus
 
 	if attack_shape and attack_shape.shape is CircleShape2D:
 		attack_shape.shape.radius = final_range
-		print("[ElementalWeapon] 攻击范围=", final_range, "px (base=", base_range, "+爆炸范围=", explosion_range_bonus, ")")
+		print(
+			"[ElementalWeapon] 攻击范围=",
+			final_range,
+			"px (base=",
+			base_range,
+			"+爆炸范围=",
+			explosion_range_bonus,
+			"+范围=",
+			range_bonus,
+			")"
+		)
 
 func _calculate_cooldown() -> void:
 	var base_cooldown: float = weapon_template.get("base_cooldown", 1.2)
@@ -187,17 +198,18 @@ func _perform_attack() -> void:
 	for enemy: Node2D in enemies:
 		var damage: float = calculate_damage()
 		enemy.take_damage(damage)
-		_apply_elemental_effects(enemy)
+		_apply_elemental_effects(enemy, damage)
 		print("[ElementalWeapon] 命中: ", enemy.name, " damage=", int(damage))
 
+	_play_attack_animation()
 	_play_vfx()
 
 ## 施加元素状态（燃烧/减速/冻结）
-func _apply_elemental_effects(enemy: Node2D) -> void:
+func _apply_elemental_effects(enemy: Node2D, dealt_damage: float) -> void:
 	var burn_chance: float = player.get_final_stat("BurnChance")
 	if randf() * 100.0 < burn_chance:
 		if enemy.has_method("apply_burn"):
-			enemy.apply_burn()
+			enemy.apply_burn(dealt_damage)
 			print("[ElementalWeapon] 触发燃烧")
 
 	var slow_chance: float = player.get_final_stat("SlowChance")
@@ -209,7 +221,7 @@ func _apply_elemental_effects(enemy: Node2D) -> void:
 	var freeze_chance: float = player.get_final_stat("FreezeChance")
 	if randf() * 100.0 < freeze_chance:
 		if enemy.has_method("apply_freeze"):
-			enemy.apply_freeze()
+			enemy.apply_freeze(1.1)
 			print("[ElementalWeapon] 触发冻结")
 
 func _play_vfx() -> void:
@@ -228,6 +240,19 @@ func _play_vfx() -> void:
 	tween.tween_property(vfx_sprite, "scale", vfx_sprite.scale * 1.7, ELEMENT_VFX_DURATION)
 	tween.parallel().tween_property(vfx_sprite, "modulate:a", 0.0, ELEMENT_VFX_DURATION)
 	tween.tween_callback(vfx_node.queue_free)
+
+func _play_attack_animation() -> void:
+	if not sprite:
+		return
+	var base_scale: Vector2 = sprite.scale
+	var base_rot: float = sprite.rotation
+	var target_rot: float = base_rot + randf_range(-0.10, 0.10)
+	var tween: Tween = create_tween()
+	tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(sprite, "scale", base_scale * 1.12, 0.06)
+	tween.parallel().tween_property(sprite, "rotation", target_rot, 0.06)
+	tween.tween_property(sprite, "scale", base_scale, 0.12)
+	tween.parallel().tween_property(sprite, "rotation", base_rot, 0.12)
 
 ##############################################################################
 # 伤害计算

@@ -68,13 +68,6 @@ const MAP_ROWS: int = 2
 ## 每张地图目标高度（1080p）
 const MAP_TARGET_HEIGHT: float = 1080.0
 
-## 地图统一基调（解决多张地图拼接后的画风割裂）
-const MAP_TINT_BASE: Color = Color(0.90, 0.95, 1.00, 1.0)
-const MAP_TINT_VARIANCE: float = 0.05
-
-## 世界氛围漂浮粒子数量
-const AMBIENT_MOTE_COUNT: int = 34
-
 ##############################################################################
 # 节点引用
 ##############################################################################
@@ -94,25 +87,6 @@ var player: CharacterBody2D = null
 ## 地图边界（世界坐标）
 var map_bounds: Rect2 = Rect2()
 
-## 世界动态氛围开关（用于测试/回滚）
-@export var enable_world_liveliness: bool = true
-## 世界统一调色开关（用于测试/回滚）
-@export var enable_world_style_grade: bool = true
-
-## 世界调色覆盖层（CanvasLayer，位于HUD下方）
-var world_fx_layer: CanvasLayer = null
-var world_tint_rect: ColorRect = null
-var world_vignette_rect: TextureRect = null
-var world_fx_time: float = 0.0
-
-## 世界漂浮尘粒
-var ambience_root: Node2D = null
-var ambience_motes: Array[Sprite2D] = []
-var ambience_velocities: Array[Vector2] = []
-var ambience_phases: Array[float] = []
-var ambience_base_scales: Array[float] = []
-var ambience_time: float = 0.0
-
 ##############################################################################
 # 矿点生成参数
 ##############################################################################
@@ -125,7 +99,7 @@ var ambience_time: float = 0.0
 const ORE_MINE_MARGIN: float = 220.0
 
 ## 每条边的矿点数量（沿地图四周均匀分布）
-const ORE_MINE_COUNT_PER_EDGE: int = 4
+const ORE_MINE_COUNT_PER_EDGE: int = 6
 
 ##############################################################################
 # 生命周期
@@ -143,20 +117,12 @@ func _ready() -> void:
 	
 	## 初始化玩家
 	_initialize_player()
-
-	## 场景氛围与统一调色
-	_setup_world_style_fx()
-	_setup_world_ambient_motes()
 	
 	## 连接GameManager信号
 	_connect_signals()
 
 	## 启动游戏计时器
 	GameManager.start_game()
-
-func _process(delta: float) -> void:
-	_update_world_style_fx(delta)
-	_update_world_ambient_motes(delta)
 
 ##############################################################################
 # 玩家初始化
@@ -229,8 +195,8 @@ func _calculate_shop_door_position() -> Vector2:
 	## 随机角度
 	var angle: float = randf() * TAU
 	var offset: Vector2 = Vector2(cos(angle), sin(angle)) * distance
-
-	return _clamp_position_to_map(player.global_position + offset, 64.0)
+	
+	return player.global_position + offset
 
 ##############################################################################
 # 工坊门生成
@@ -266,21 +232,8 @@ func _calculate_forge_door_position() -> Vector2:
 	var distance: float = randf_range(200.0, 400.0)
 	var angle: float = randf() * TAU
 	var offset: Vector2 = Vector2(cos(angle), sin(angle)) * distance
-
-	return _clamp_position_to_map(player.global_position + offset, 64.0)
-
-## 将位置限制在地图有效区域内（用于门/交互点生成）
-func _clamp_position_to_map(pos: Vector2, margin: float = 48.0) -> Vector2:
-	if map_bounds.size == Vector2.ZERO:
-		return pos
-	var min_x: float = map_bounds.position.x + margin
-	var max_x: float = map_bounds.position.x + map_bounds.size.x - margin
-	var min_y: float = map_bounds.position.y + margin
-	var max_y: float = map_bounds.position.y + map_bounds.size.y - margin
-	return Vector2(
-		clamp(pos.x, min_x, max_x),
-		clamp(pos.y, min_y, max_y)
-	)
+	
+	return player.global_position + offset
 
 ##############################################################################
 # 游戏结束
@@ -388,187 +341,28 @@ func _build_map() -> void:
 			sprite.scale = Vector2(scale_factor, scale_factor)
 			sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 			sprite.z_index = -100
-			if enable_world_style_grade:
-				var tint_jitter: float = randf_range(-MAP_TINT_VARIANCE, MAP_TINT_VARIANCE)
-				sprite.self_modulate = Color(
-					clamp(MAP_TINT_BASE.r + tint_jitter * 0.22, 0.0, 1.0),
-					clamp(MAP_TINT_BASE.g + tint_jitter * 0.12, 0.0, 1.0),
-					clamp(MAP_TINT_BASE.b - tint_jitter * 0.18, 0.0, 1.0),
-					1.0
-				)
-			else:
-				sprite.self_modulate = Color.WHITE
 			map_root.add_child(sprite)
 
 			index += 1
-
-##############################################################################
-# 世界氛围与画风统一
-##############################################################################
-
-func _setup_world_style_fx() -> void:
-	if not enable_world_style_grade:
-		return
-	if world_fx_layer and is_instance_valid(world_fx_layer):
-		world_fx_layer.queue_free()
-	world_fx_layer = CanvasLayer.new()
-	world_fx_layer.name = "WorldStyleFX"
-	world_fx_layer.layer = 50
-	add_child(world_fx_layer)
-
-	world_tint_rect = ColorRect.new()
-	world_tint_rect.name = "WorldTint"
-	world_tint_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	world_tint_rect.anchor_right = 1.0
-	world_tint_rect.anchor_bottom = 1.0
-	world_tint_rect.color = Color(0.08, 0.16, 0.23, 0.11)
-	world_fx_layer.add_child(world_tint_rect)
-
-	world_vignette_rect = TextureRect.new()
-	world_vignette_rect.name = "WorldVignette"
-	world_vignette_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	world_vignette_rect.anchor_right = 1.0
-	world_vignette_rect.anchor_bottom = 1.0
-	world_vignette_rect.stretch_mode = TextureRect.STRETCH_SCALE
-	world_vignette_rect.texture = _make_vignette_texture(640, 360)
-	world_vignette_rect.modulate = Color(1.0, 1.0, 1.0, 0.23)
-	world_fx_layer.add_child(world_vignette_rect)
-
-func _setup_world_ambient_motes() -> void:
-	if not enable_world_liveliness or map_bounds.size == Vector2.ZERO:
-		return
-	if ambience_root and is_instance_valid(ambience_root):
-		ambience_root.queue_free()
-
-	ambience_root = Node2D.new()
-	ambience_root.name = "AmbientMotes"
-	ambience_root.z_index = -55
-	add_child(ambience_root)
-
-	ambience_motes.clear()
-	ambience_velocities.clear()
-	ambience_phases.clear()
-	ambience_base_scales.clear()
-	ambience_time = randf() * TAU
-
-	var mote_texture: Texture2D = _make_soft_circle_texture(14, Color(0.76, 0.88, 1.0, 0.22))
-	var left: float = map_bounds.position.x
-	var right: float = map_bounds.position.x + map_bounds.size.x
-	var top: float = map_bounds.position.y
-	var bottom: float = map_bounds.position.y + map_bounds.size.y
-
-	for i in range(AMBIENT_MOTE_COUNT):
-		var mote := Sprite2D.new()
-		mote.texture = mote_texture
-		mote.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-		mote.global_position = Vector2(randf_range(left, right), randf_range(top, bottom))
-		var base_scale: float = randf_range(0.35, 0.80)
-		mote.scale = Vector2.ONE * base_scale
-		mote.modulate = Color(
-			randf_range(0.70, 0.86),
-			randf_range(0.82, 0.94),
-			1.0,
-			randf_range(0.08, 0.20)
-		)
-		ambience_root.add_child(mote)
-		ambience_motes.append(mote)
-		ambience_velocities.append(Vector2(randf_range(-10.0, 10.0), randf_range(-14.0, -6.0)))
-		ambience_phases.append(randf() * TAU)
-		ambience_base_scales.append(base_scale)
-
-func _update_world_style_fx(delta: float) -> void:
-	if not enable_world_style_grade:
-		return
-	if not world_tint_rect or not world_vignette_rect:
-		return
-	world_fx_time += delta
-	var pulse: float = 0.5 + 0.5 * sin(world_fx_time * 0.32)
-	world_tint_rect.color.a = 0.10 + 0.025 * pulse
-	world_vignette_rect.modulate.a = 0.19 + 0.05 * (1.0 - pulse)
-
-func _update_world_ambient_motes(delta: float) -> void:
-	if not enable_world_liveliness:
-		return
-	if ambience_motes.is_empty() or map_bounds.size == Vector2.ZERO:
-		return
-	ambience_time += delta
-	var left: float = map_bounds.position.x - 90.0
-	var right: float = map_bounds.position.x + map_bounds.size.x + 90.0
-	var top: float = map_bounds.position.y - 90.0
-	var bottom: float = map_bounds.position.y + map_bounds.size.y + 90.0
-	for i in range(ambience_motes.size()):
-		var mote: Sprite2D = ambience_motes[i]
-		if not mote or not is_instance_valid(mote):
-			continue
-		var wave := Vector2(
-			cos(ambience_time * 0.55 + ambience_phases[i]),
-			sin(ambience_time * 0.62 + ambience_phases[i] * 0.7)
-		) * 5.0
-		mote.global_position += (ambience_velocities[i] + wave) * delta
-
-		if mote.global_position.x < left:
-			mote.global_position.x = right
-		elif mote.global_position.x > right:
-			mote.global_position.x = left
-		if mote.global_position.y < top:
-			mote.global_position.y = bottom
-		elif mote.global_position.y > bottom:
-			mote.global_position.y = top
-
-		var pulse: float = 0.5 + 0.5 * sin(ambience_time * 1.25 + ambience_phases[i])
-		var c: Color = mote.modulate
-		c.a = 0.08 + 0.12 * pulse
-		mote.modulate = c
-		var target_scale: float = ambience_base_scales[i] * (0.90 + 0.18 * pulse)
-		mote.scale = mote.scale.lerp(Vector2.ONE * target_scale, clamp(delta * 2.8, 0.0, 1.0))
-
-func _make_soft_circle_texture(size: int, color: Color) -> Texture2D:
-	var s: int = max(4, size)
-	var img: Image = Image.create(s, s, false, Image.FORMAT_RGBA8)
-	var center: Vector2 = Vector2(float(s - 1), float(s - 1)) * 0.5
-	var inv_radius: float = 1.0 / max(1.0, center.x)
-	for y in range(s):
-		for x in range(s):
-			var d: float = center.distance_to(Vector2(x, y)) * inv_radius
-			var a: float = clamp(1.0 - smoothstep(0.25, 1.0, d), 0.0, 1.0) * color.a
-			img.set_pixel(x, y, Color(color.r, color.g, color.b, a))
-	return ImageTexture.create_from_image(img)
-
-func _make_vignette_texture(width: int, height: int) -> Texture2D:
-	var w: int = max(128, width)
-	var h: int = max(72, height)
-	var img: Image = Image.create(w, h, false, Image.FORMAT_RGBA8)
-	var cx: float = float(w - 1) * 0.5
-	var cy: float = float(h - 1) * 0.5
-	var inv_rx: float = 1.0 / max(1.0, cx)
-	var inv_ry: float = 1.0 / max(1.0, cy)
-	for y in range(h):
-		for x in range(w):
-			var dx: float = (float(x) - cx) * inv_rx
-			var dy: float = (float(y) - cy) * inv_ry
-			var d: float = sqrt(dx * dx + dy * dy)
-			var alpha: float = clamp(smoothstep(0.56, 1.02, d), 0.0, 1.0)
-			img.set_pixel(x, y, Color(0.0, 0.0, 0.0, alpha))
-	return ImageTexture.create_from_image(img)
 
 ##############################################################################
 # 矿点系统
 ##############################################################################
 
 func _spawn_ore_mines() -> void:
-	## 地图四周均匀放置矿点（P1.1：降低总点位与单位产能，避免矿石爆仓）
+	## 地图四周均匀放置矿点（近战可一刀扫多点）
 	if not ore_mine_scene or map_bounds.size == Vector2.ZERO:
 		return
 	var positions: Array[Vector2] = _generate_perimeter_positions(ORE_MINE_COUNT_PER_EDGE)
 	for i in range(positions.size()):
 		var cfg: Dictionary = {
 			"mine_id": "EDGE_%02d" % [i],
-			"respawn_time": 95.0,
-			"drop_min": 1,
-			"drop_max": 3,
+			"respawn_time": 30.0,
+			"drop_min": 5,
+			"drop_max": 8,
 			"stage_bonus_s2": 1,
-			"stage_bonus_s3": 1,
-			"stage_bonus_s4": 2,
+			"stage_bonus_s3": 2,
+			"stage_bonus_s4": 3,
 			"pos": positions[i]
 		}
 		var mine: StaticBody2D = ore_mine_scene.instantiate()
@@ -581,9 +375,7 @@ func _spawn_ore_mines() -> void:
 func _generate_perimeter_positions(count_per_edge: int) -> Array[Vector2]:
 	count_per_edge = max(1, count_per_edge)
 	var pos: Array[Vector2] = []
-	var max_margin: float = min(map_bounds.size.x, map_bounds.size.y) * 0.5 - 40.0
-	var safe_max: float = max(40.0, max_margin)
-	var margin: float = clamp(ORE_MINE_MARGIN, 40.0, safe_max)
+	var margin: float = max(80.0, ORE_MINE_MARGIN)
 	var left: float = map_bounds.position.x + margin
 	var right: float = map_bounds.position.x + map_bounds.size.x - margin
 	var top: float = map_bounds.position.y + margin
@@ -591,16 +383,16 @@ func _generate_perimeter_positions(count_per_edge: int) -> Array[Vector2]:
 
 	for i in range(count_per_edge):
 		var t: float = float(i + 1) / float(count_per_edge + 1)
-		pos.append(Vector2(lerp(left, right, t), top))
+		pos.append(Vector2(lerp(left, right, t), top + 80.0))
 	for i in range(count_per_edge):
 		var t: float = float(i + 1) / float(count_per_edge + 1)
-		pos.append(Vector2(lerp(left, right, t), bottom))
+		pos.append(Vector2(lerp(left, right, t), bottom - 80.0))
 	for i in range(count_per_edge):
 		var t: float = float(i + 1) / float(count_per_edge + 1)
-		pos.append(Vector2(left, lerp(top, bottom, t)))
+		pos.append(Vector2(left + 80.0, lerp(top, bottom, t)))
 	for i in range(count_per_edge):
 		var t: float = float(i + 1) / float(count_per_edge + 1)
-		pos.append(Vector2(right, lerp(top, bottom, t)))
+		pos.append(Vector2(right - 80.0, lerp(top, bottom, t)))
 	return pos
 
 ##############################################################################

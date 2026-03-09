@@ -3,12 +3,12 @@
 #
 # 设计目的：
 # - Boss击杀后生成的工坊入口
-# - 30秒倒计时后自动消失
+# - 倒计时后自动消失
 # - 玩家进入后打开工坊UI
 #
 # 与ShopDoor的区别：
 # - 生成时机：Boss击杀后
-# - 存在时间：30秒（更短）
+# - 存在时间：40秒（保证工坊操作时间）
 # - 生成位置：视野内200-400px
 # - 视觉效果：更华丽（Boss奖励感）
 #
@@ -25,14 +25,14 @@ extends Area2D
 ## 门存在时间（秒）
 ## 单位：秒
 ## 作用：Boss击杀后的工坊开放时间
-## 当前值：30秒（不可改，设计固定）
-@export var lifetime: float = 30.0
+## 当前值：40秒（留出操作与阅读时间）
+@export var lifetime: float = 40.0
 
 ## 提示文本
 @export var hint_text: String = "按 E 进入工坊"
 
 ## 是否自动进入
-@export var auto_enter: bool = true
+@export var auto_enter: bool = false
 
 ## Boss分钟标记（用于ForgeManager限制）
 var boss_minute: int = 0
@@ -158,7 +158,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not has_player:
 		return
 	
-	if event.is_action_pressed("ui_accept"):
+	if _is_interact_pressed(event):
 		_enter_forge()
 
 ##############################################################################
@@ -250,7 +250,7 @@ func _load_sprite() -> void:
 		return
 	
 	## 尝试加载工坊门图片
-	var sprite_path: String = "res://assets/PIC/forge/256/forge_door.png"
+	var sprite_path: String = "res://assets/PIC/map/256/ore_door.png"
 	if ResourceLoader.exists(sprite_path):
 		sprite.texture = load(sprite_path)
 		sprite.scale = Vector2(0.5, 0.5)
@@ -285,6 +285,22 @@ func _play_enter_sound() -> void:
 	# TODO: 工坊进入音效
 	pass
 
+## 统一交互输入检测
+## 优先使用InputMap中的interact，其次回退到常见键位
+func _is_interact_pressed(event: InputEvent) -> bool:
+	if event.is_action_pressed("interact"):
+		return true
+	if event.is_action_pressed("ui_accept"):
+		return true
+	if event is InputEventKey:
+		var key_event: InputEventKey = event
+		if key_event.pressed and not key_event.echo:
+			if key_event.keycode == KEY_E:
+				return true
+			if key_event.keycode == KEY_ENTER or key_event.keycode == KEY_KP_ENTER:
+				return true
+	return false
+
 
 ##############################################################################
 # 场景搭建指南
@@ -307,7 +323,7 @@ func _play_enter_sound() -> void:
 #     │   [position: Vector2(0, -100)]
 #     │   [visible: false]
 #     ├─ CountdownLabel (Label)
-#     │   [text: "30s"]
+#     │   [text: "40s"]
 #     │   [horizontal_alignment: Center]
 #     │   [position: Vector2(0, 80)]
 #     │   [theme_override_font_sizes/font_size: 24]
@@ -325,7 +341,7 @@ func _play_enter_sound() -> void:
 #    - Text = "按 E 进入工坊"
 #    - Position = (0, -100)
 # 6. 添加CountdownLabel子节点
-#    - Text = "30s"
+#    - Text = "40s"
 #    - Position = (0, 80)
 #    - Font Size = 24
 # 7. 保存为 res://scenes/ui/forge_door.tscn

@@ -271,13 +271,19 @@ func _get_opaque_left_offset(texture: Texture2D) -> float:
 ##
 ## 作用：将attack_range写入CircleShape2D半径
 func _setup_attack_range() -> void:
-	var range: float = weapon_template.get("attack_range", 80.0)
-	range = max(25.0, range)
+	var range: float = _get_effective_range()
 	if attack_shape and attack_shape.shape is CircleShape2D:
 		attack_shape.shape.radius = range
 		print("[MeleeWeapon] 攻击范围已设置: ", range, "px")
 	else:
 		push_error("[MeleeWeapon] AttackArea的CollisionShape2D不是CircleShape2D")
+
+func _get_effective_range() -> float:
+	var base_range: float = weapon_template.get("attack_range", 80.0)
+	var range_bonus: float = 0.0
+	if player:
+		range_bonus = player.get_final_stat("Range")
+	return max(25.0, base_range + range_bonus)
 
 ##############################################################################
 # 冷却计算
@@ -324,8 +330,7 @@ func _on_attack_timer_timeout() -> void:
 ## 5) 输出调试信息
 func _perform_attack() -> void:
 	var origin: Vector2 = _get_attack_origin()
-	var attack_range: float = weapon_template.get("attack_range", 80.0)
-	attack_range = max(25.0, attack_range)
+	var attack_range: float = _get_effective_range()
 	var enemies: Array[Node2D] = _query_enemies_in_range(origin, attack_range)
 
 	if enemies.is_empty():
@@ -611,7 +616,7 @@ func _play_attack_animation(attack_direction: Vector2) -> void:
 	tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 	# 获取攻击范围（用于计算挥砍距离）
-	var attack_range: float = weapon_template.get("attack_range", 120.0)
+	var attack_range: float = _get_effective_range()
 	var swing_distance: float = attack_range * 0.8  # 挥砍移动距离为攻击范围的80%
 
 	# 记录原始位置和旋转

@@ -29,9 +29,6 @@ var boss_minute: int = 5
 ## 是否已经触发Boss出生事件（防重复）
 var boss_event_triggered: bool = false
 
-## 半血狂暴是否已触发（防止每帧重复叠乘）
-var rage_applied: bool = false
-
 ##############################################################################
 # 初始化
 ##############################################################################
@@ -40,12 +37,9 @@ var rage_applied: bool = false
 ## 参数：id=BossID, minute_mark=刷新分钟
 func initialize_boss(id: String, minute_mark: int) -> void:
 	boss_minute = minute_mark
-	rage_applied = false
 
 	## 先调用Enemy初始化（加载monster.csv字段）
-	await initialize(id, minute_mark)
-	if is_queued_for_deletion():
-		return
+	initialize(id, minute_mark)
 	add_to_group("boss")
 
 	## 叠加Boss倍率
@@ -70,19 +64,19 @@ func initialize_boss(id: String, minute_mark: int) -> void:
 ## Boss生命倍率（可按分钟分段）
 func _get_boss_hp_mult() -> float:
 	match boss_minute:
-		5:  return 2.2
-		10: return 3.6
-		15: return 5.2
-		20: return 7.0
+		5:  return 3.0
+		10: return 5.0
+		15: return 8.0
+		20: return 12.0
 		_:  return 1.0
 
 ## Boss伤害倍率（可按分钟分段）
 func _get_boss_damage_mult() -> float:
 	match boss_minute:
-		5:  return 1.05
-		10: return 1.2
-		15: return 1.55
-		20: return 1.95
+		5:  return 1.5
+		10: return 2.0
+		15: return 2.5
+		20: return 3.0
 		_:  return 1.0
 
 ##############################################################################
@@ -117,16 +111,11 @@ func _spawn_pickup(pickup_type: String, gold: int, exp_amount: int, ore_amount: 
 		"type": pickup_type,
 		"gold": gold,
 		"exp": exp_amount,
-		"ore": ore_amount,
-		"source": "boss"
+		"ore": ore_amount
 	}
-	var parent_node: Node = get_tree().current_scene
-	if not parent_node:
-		parent_node = get_parent()
-	if parent_node:
-		parent_node.add_child(pickup)
 	if pickup.has_method("initialize"):
-		pickup.call_deferred("initialize", config)
+		pickup.initialize(config)
+	get_parent().add_child(pickup)
 
 ##############################################################################
 # Boss奖励表
@@ -134,18 +123,18 @@ func _spawn_pickup(pickup_type: String, gold: int, exp_amount: int, ore_amount: 
 
 func _get_boss_gold() -> int:
 	match boss_minute:
-		5:  return 110
-		10: return 230
-		15: return 380
-		20: return 620
-		_:  return 110
+		5:  return 100
+		10: return 200
+		15: return 300
+		20: return 500
+		_:  return 100
 
 func _get_boss_ore() -> int:
 	match boss_minute:
 		5:  return 5
 		10: return 10
-		15: return 22
-		20: return 36
+		15: return 15
+		20: return 20
 		_:  return 5
 
 ##############################################################################
@@ -157,21 +146,8 @@ func _physics_process(delta: float) -> void:
 	_boss_special_behavior(delta)
 
 ## Boss特性逻辑（示例：半血狂暴）
-func _boss_special_behavior(_delta: float) -> void:
+func _boss_special_behavior(delta: float) -> void:
 	var hp_percent: float = current_hp / max_hp
-	if not rage_applied and hp_percent < 0.5:
-		rage_applied = true
-		var rage_cooldown_mult: float = 0.82
-		var rage_speed_mult: float = 1.08
-		if boss_minute >= 20:
-			rage_cooldown_mult = 0.72
-			rage_speed_mult = 1.18
-		elif boss_minute >= 15:
-			rage_cooldown_mult = 0.76
-			rage_speed_mult = 1.14
-		elif boss_minute >= 10:
-			rage_cooldown_mult = 0.79
-			rage_speed_mult = 1.10
-		attack_cooldown = max(0.35, attack_cooldown * rage_cooldown_mult)
-		speed *= rage_speed_mult
+	if hp_percent < 0.5 and attack_cooldown > 0.5:
+		attack_cooldown *= 0.7
 		print("[Boss] 进入狂暴状态")
